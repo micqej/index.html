@@ -1,45 +1,28 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { requireAdmin } from '../../../lib/adminAuth'
-import { generateArticle, aiReady } from '../../../lib/aiContent'
-import { searchImages } from '../../../lib/images'
+import { aiReady } from '../../../lib/aiContent'
 import { getSettings } from '../../../lib/settings'
-import { linkPool } from '../../../lib/links'
-import { SERVICE_LINKS, WRITING_STYLES } from '../../../lib/text'
-import { quotaMessage } from '../../../lib/quota'
+import { startJob } from '../../../lib/generate'
 
-// AI generovanie trvá 20–40 s — bez tohto Vercel zabije funkciu po 10 s a "nič sa nestane".
-export const config = { maxDuration: 60 }
+// Len založí úlohu — samotné písanie beží po krokoch cez /api/admin/generate-tick.
+export const config = { maxDuration: 20 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (!requireAdmin(req, res)) return
   if (req.method !== 'POST') return res.status(405).end()
-  if (!(await aiReady())) return res.status(400).json({ error: 'OPENAI_API_KEY nie je nastavený' })
-  const { topic, category } = req.body || {}
+  if (!(await aiReady())) return res.status(400).json({ error: 'OpenAI kľúč nie je nastavený (Integrácie).' })
+  const { topic, category, keywords, wordCount } = req.body || {}
   if (!topic) return res.status(400).json({ error: 'Chýba téma' })
   try {
     const s = await getSettings()
-    const cat = category || s.defaultCategory
-    const links = s.autoInterlink && s.linkCount > 0
-      ? [...SERVICE_LINKS, ...(await linkPool(cat, undefined, 10))]
-      : []
-    const style = s.randomStyle ? WRITING_STYLES[Math.floor(Math.random() * WRITING_STYLES.length)] : ''
-    const article = await generateArticle({
-      topic,
-      category: cat,
-      tone: s.tone,
-      wordCount: s.wordCount,
-      model: s.model,
-      temperature: s.temperature,
-      businessContext: s.businessContext,
-      links,
-      linkCount: s.autoInterlink ? s.linkCount : 0,
-      maxTitleWords: s.titleMaxWords || 8,
-      style,
+    const job = await startJob({
+      topic: String(topic).slice(0, 200),
+      category: category || s.defaultCategory,
+      keywords: keywords || '',
+      wordCount: Number(wordCount) > 0 ? Number(wordCount) : s.wordCount,
     })
-    let images = await searchImages(article.image_query, s.imageSource, 12)
-    if (!images.length) images = await searchImages(cat, s.imageSource, 12)
-    return res.status(200).json({ article, images })
+    return res.status(200).json({ jobId: job.id, job })
   } catch (e: any) {
-    return res.status(500).json({ error: quotaMessage(e) || e.message || 'Chyba generovania' })
+    return res.status(500).json({ error: e.message || 'Nepodarilo sa spustiť generovanie' })
   }
 }

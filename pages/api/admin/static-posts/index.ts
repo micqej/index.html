@@ -3,6 +3,9 @@ import { requireAdmin } from '../../../../lib/adminAuth'
 import { getAllPosts, getPostBySlug } from '../../../../lib/posts'
 import { listArticles } from '../../../../lib/articles'
 
+// Strop na funkciu — bez neho ju platforma nechá visieť 300 s (=zamrznutý admin).
+export const config = { maxDuration: 20 }
+
 /**
  * The 162 pôvodných článkov žije v statickom JSON exporte z WordPressu.
  * Tu ich admin vie nájsť a otvoriť — pri uložení sa „forknú" do DB (vlastný

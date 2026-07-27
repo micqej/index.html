@@ -1,4 +1,4 @@
-import { getSql, ensureSchema } from './db'
+import { db, dbSafe } from './db'
 import type { Post } from './posts'
 
 export interface Article {
@@ -45,19 +45,15 @@ export function readingTime(html: string): number {
 }
 
 export async function uniqueSlug(base: string, excludeId?: number): Promise<string> {
-  const sql = getSql()
-  if (!sql) return base
-  let slug = base || 'clanok'
-  let n = 1
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const rows = excludeId
-      ? await sql`SELECT id FROM articles WHERE slug = ${slug} AND id <> ${excludeId} LIMIT 1`
-      : await sql`SELECT id FROM articles WHERE slug = ${slug} LIMIT 1`
-    if (rows.length === 0) return slug
-    n += 1
-    slug = `${base}-${n}`
-  }
+  const start = base || 'clanok'
+  // Jeden dotaz namiesto slučky N dotazov (a bez rizika nekonečného cyklu).
+  const rows = await dbSafe(sql => (excludeId
+    ? sql`SELECT slug FROM articles WHERE (slug = ${start} OR slug LIKE ${start + '-%'}) AND id <> ${excludeId}`
+    : sql`SELECT slug FROM articles WHERE (slug = ${start} OR slug LIKE ${start + '-%'})`), [] as any[])
+  const taken = new Set(rows.map((r: any) => r.slug))
+  if (!taken.has(start)) return start
+  for (let n = 2; n < 500; n++) if (!taken.has(`${start}-${n}`)) return `${start}-${n}`
+  return `${start}-${Date.now()}`
 }
 
 function rowToArticle(r: any): Article {
@@ -71,31 +67,31 @@ function rowToArticle(r: any): Article {
 }
 
 export async function listArticles(status?: string): Promise<Article[]> {
-  const sql = getSql()
-  if (!sql) return []
-  await ensureSchema()
-  const rows = status
-    ? await sql`SELECT * FROM articles WHERE status = ${status} ORDER BY COALESCE(publish_at, created_at) DESC`
-    : await sql`SELECT * FROM articles ORDER BY COALESCE(publish_at, created_at) DESC`
+  const rows = await dbSafe(sql => (status
+    ? sql`SELECT * FROM articles WHERE status = ${status} ORDER BY COALESCE(publish_at, created_at) DESC`
+    : sql`SELECT * FROM articles ORDER BY COALESCE(publish_at, created_at) DESC`), [] as any[])
+  return rows.map(rowToArticle)
+}
+
+/** Zoznam pre admin tabuľku — bez `content` (telo článku je 10–30 kB a v zozname sa nepoužíva). */
+export async function listArticlesLite(): Promise<Omit<Article, 'content'>[]> {
+  const rows = await dbSafe(sql => sql`SELECT id, slug, title, excerpt, meta_title, meta_desc, meta_keywords,
+      og_title, og_desc, category, tags, image_url, image_credit, author, status, publish_at,
+      reading_time, source, created_at, updated_at
+    FROM articles ORDER BY COALESCE(publish_at, created_at) DESC`, [] as any[])
   return rows.map(rowToArticle)
 }
 
 export async function getArticle(id: number): Promise<Article | null> {
-  const sql = getSql()
-  if (!sql) return null
-  await ensureSchema()
-  const rows = await sql`SELECT * FROM articles WHERE id = ${id} LIMIT 1`
+  const rows = await dbSafe(sql => sql`SELECT * FROM articles WHERE id = ${id} LIMIT 1`, [] as any[])
   return rows[0] ? rowToArticle(rows[0]) : null
 }
 
 export async function createArticle(a: Partial<Article>): Promise<Article> {
-  const sql = getSql()
-  if (!sql) throw new Error('DB not configured')
-  await ensureSchema()
   const base = slugify(a.slug || a.title || 'clanok')
   const slug = await uniqueSlug(base)
   const tags = a.tags || []
-  const rows = await sql`INSERT INTO articles
+  const rows = await db(sql => sql`INSERT INTO articles
     (slug, title, content, excerpt, meta_title, meta_desc, meta_keywords, og_title, og_desc,
      category, tags, image_url, image_credit, author, status, publish_at, reading_time, source)
     VALUES (${slug}, ${a.title || ''}, ${a.content || ''}, ${a.excerpt || ''},
@@ -104,14 +100,12 @@ export async function createArticle(a: Partial<Article>): Promise<Article> {
      ${a.category || 'Marketing'}, ${sql.json(tags as any)}, ${a.image_url || ''}, ${a.image_credit || ''},
      ${a.author || 'Monetico'}, ${a.status || 'draft'}, ${a.publish_at || null},
      ${a.reading_time || readingTime(a.content || '')}, ${a.source || 'manual'})
-    RETURNING *`
+    RETURNING *`)
+  if (!rows) throw new Error('DB nie je nastavená')
   return rowToArticle(rows[0])
 }
 
 export async function updateArticle(id: number, a: Partial<Article>): Promise<Article | null> {
-  const sql = getSql()
-  if (!sql) throw new Error('DB not configured')
-  await ensureSchema()
   const current = await getArticle(id)
   if (!current) return null
   const slug = a.slug && a.slug !== current.slug
@@ -119,30 +113,25 @@ export async function updateArticle(id: number, a: Partial<Article>): Promise<Ar
     : current.slug
   const merged = { ...current, ...a, slug }
   const tags = merged.tags || []
-  const rows = await sql`UPDATE articles SET
+  const rows = await db(sql => sql`UPDATE articles SET
     slug = ${merged.slug}, title = ${merged.title}, content = ${merged.content},
     excerpt = ${merged.excerpt}, meta_title = ${merged.meta_title}, meta_desc = ${merged.meta_desc},
     meta_keywords = ${merged.meta_keywords}, og_title = ${merged.og_title}, og_desc = ${merged.og_desc},
     category = ${merged.category}, tags = ${sql.json(tags as any)}, image_url = ${merged.image_url},
     image_credit = ${merged.image_credit}, author = ${merged.author}, status = ${merged.status},
     publish_at = ${merged.publish_at}, reading_time = ${merged.reading_time}, updated_at = now()
-    WHERE id = ${id} RETURNING *`
-  return rows[0] ? rowToArticle(rows[0]) : null
+    WHERE id = ${id} RETURNING *`)
+  return rows && rows[0] ? rowToArticle(rows[0]) : null
 }
 
 export async function deleteArticle(id: number): Promise<void> {
-  const sql = getSql()
-  if (!sql) return
-  await sql`DELETE FROM articles WHERE id = ${id}`
+  await dbSafe(sql => sql`DELETE FROM articles WHERE id = ${id}`, null as any)
 }
 
 /** Move scheduled articles whose time has come to published. Returns count published. */
 export async function publishDue(): Promise<number> {
-  const sql = getSql()
-  if (!sql) return 0
-  await ensureSchema()
-  const rows = await sql`UPDATE articles SET status = 'published', updated_at = now()
-    WHERE status = 'scheduled' AND publish_at IS NOT NULL AND publish_at <= now() RETURNING id`
+  const rows = await dbSafe(sql => sql`UPDATE articles SET status = 'published', updated_at = now()
+    WHERE status = 'scheduled' AND publish_at IS NOT NULL AND publish_at <= now() RETURNING id`, [] as any[])
   return rows.length
 }
 
@@ -172,15 +161,8 @@ function articleToPost(a: Article): Post {
 
 /** Published DB articles mapped to the public Post shape (for the blog). */
 export async function getPublishedPosts(): Promise<Post[]> {
-  const sql = getSql()
-  if (!sql) return []
-  try {
-    await ensureSchema()
-    const rows = await sql`SELECT * FROM articles
-      WHERE status = 'published' AND (publish_at IS NULL OR publish_at <= now())
-      ORDER BY COALESCE(publish_at, created_at) DESC`
-    return rows.map(rowToArticle).map(articleToPost)
-  } catch {
-    return []
-  }
+  const rows = await dbSafe(sql => sql`SELECT * FROM articles
+    WHERE status = 'published' AND (publish_at IS NULL OR publish_at <= now())
+    ORDER BY COALESCE(publish_at, created_at) DESC`, [] as any[])
+  return rows.map(rowToArticle).map(articleToPost)
 }

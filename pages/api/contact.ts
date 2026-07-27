@@ -4,6 +4,9 @@ import { sendPush } from '../../lib/push'
 import { sendNotifyEmail } from '../../lib/email'
 import { dbReady } from '../../lib/db'
 
+// Strop na funkciu — bez neho ju platforma nechá visieť 300 s (=zamrznutý admin).
+export const config = { maxDuration: 20 }
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
   const { name, email, phone, services, message, website } = req.body || {}

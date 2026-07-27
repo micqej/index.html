@@ -54,11 +54,71 @@ function Ic({ n, s = 18 }: { n: string; s?: number }) {
   return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">{c[n]}</svg>
 }
 
-async function api(url: string, opts?: RequestInit) {
-  const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error || 'Chyba')
+/**
+ * Každé volanie má tvrdý časový strop. Bez neho sa admin pri zaseknutej DB
+ * tváril „Načítavam…" 5 minút (funkcia na Verceli beží default 300 s) a user
+ * nemal ako zistiť, čo sa deje.
+ */
+async function api(url: string, opts?: RequestInit & { timeoutMs?: number }) {
+  const { timeoutMs = 25000, ...init } = opts || {}
+  const ac = new AbortController()
+  const t = setTimeout(() => ac.abort(), timeoutMs)
+  let res: Response
+  try {
+    // cache:'no-store' — admin musí vidieť aktuálny stav; navyše bez toho vracia
+    // dev/edge cache 304 a to sa nižšie tvárilo ako chyba (=zaseknuté „Načítavam…").
+    res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, cache: 'no-store', signal: ac.signal, ...init })
+  } catch (e: any) {
+    if (e?.name === 'AbortError') throw new Error(`Server neodpovedal do ${Math.round(timeoutMs / 1000)} s. Skús to znova — ak to trvá, pozri Nastavenia → Stav systému.`)
+    throw new Error('Nepodarilo sa spojiť so serverom.')
+  } finally {
+    clearTimeout(t)
+  }
+  const data = await res.json().catch(() => ({} as any))
+  if (!res.ok && res.status !== 304) {
+    if (res.status === 401) throw new Error('Odhlásilo ťa — načítaj stránku a prihlás sa znova.')
+    if (res.status === 504) throw new Error('Server nestihol odpovedať (timeout). Skús znova.')
+    throw new Error(data.error || data.reason || `Chyba servera (${res.status})`)
+  }
   return data
+}
+
+/** Priebeh generovania — spoločné pre Prehľad, Generovať aj Plán. */
+function useJobRunner(onDone?: (r: any) => void) {
+  const [state, setState] = useState<{ id: number; message: string; current: number; total: number; error: string } | null>(null)
+  const cancelled = useRef(false)
+  const run = useCallback(async (jobId: number, firstMessage = 'Pripravujem osnovu…') => {
+    cancelled.current = false
+    setState({ id: jobId, message: firstMessage, current: 0, total: 8, error: '' })
+    // Každý krok je samostatný request (10–40 s) — nič nevisí, priebeh je vidno.
+    for (let guard = 0; guard < 20 && !cancelled.current; guard++) {
+      let r: any
+      try {
+        r = await api('/api/admin/generate-tick', { method: 'POST', body: JSON.stringify({ id: jobId }), timeoutMs: 130000 })
+      } catch (e: any) {
+        setState(p => p && { ...p, error: e.message })
+        return null
+      }
+      if (r.error && r.status === 'error') { setState(p => p && { ...p, error: r.error, message: r.message }); return null }
+      setState({ id: jobId, message: r.message, current: r.progress?.current || 0, total: r.progress?.total || 8, error: '' })
+      if (r.done) { onDone?.(r); return r }
+    }
+    return null
+  }, [onDone])
+  const reset = useCallback(() => { cancelled.current = true; setState(null) }, [])
+  return { state, run, reset }
+}
+
+function JobProgress({ state }: { state: { message: string; current: number; total: number; error: string } }) {
+  const pct = Math.min(100, Math.round((state.current / Math.max(1, state.total)) * 100))
+  return (
+    <div className="jobbox">
+      <div className="jobbar"><span style={{ width: `${pct}%` }} /></div>
+      <div className={state.error ? 'aerr' : 'amut sm'} style={{ margin: 0 }}>
+        {state.error ? state.error : `${state.message} · ${state.current}/${state.total}`}
+      </div>
+    </div>
+  )
 }
 
 const emptyEditor = {
@@ -92,7 +152,9 @@ export default function Admin() {
   const loadPending = useCallback(() => {
     api('/api/admin/stats').then(d => { setPendingC(d?.comments?.pending || 0); setUnreadM(d?.messagesUnread || 0) }).catch(() => {})
   }, [])
-  useEffect(() => { if (sess?.authed) loadPending() }, [sess?.authed, tab, loadPending])
+  // POZOR: zámerne bez `tab` v závislostiach — predtým sa štatistiky ťahali pri
+  // každom kliknutí do menu (desiatky requestov za pár sekúnd = zbytočná záťaž DB).
+  useEffect(() => { if (sess?.authed) loadPending() }, [sess?.authed, loadPending])
 
   async function login(e: any) {
     e.preventDefault(); setErr('')
@@ -113,7 +175,8 @@ export default function Admin() {
         <meta name="apple-mobile-web-app-title" content="Monetico" />
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
       </Head>
-      <style>{css}</style>
+      {/* dangerouslySetInnerHTML: inak React na serveri escapuje apostrofy v CSS (font-family:'Inter') a hodí hydration error */}
+      <style dangerouslySetInnerHTML={{ __html: css }} />
 
       {!sess ? <div className="aload">Načítavam…</div> : !sess.authed ? (
         <div className="alogin">
@@ -164,12 +227,22 @@ function Overview({ sess }: { sess: Session }) {
   const [run, setRun] = useState<any>(null)
   const [busy, setBusy] = useState(false)
   const [stats, setStats] = useState<any>(null)
-  const load = useCallback(() => { api('/api/admin/stats').then(setStats).catch(() => {}) }, [])
+  const [statsErr, setStatsErr] = useState('')
+  const [jobs, setJobs] = useState<any[]>([])
+  const load = useCallback(() => {
+    api('/api/admin/stats').then(d => { setStats(d); setStatsErr('') }).catch(e => setStatsErr(e.message))
+    api('/api/admin/jobs').then(d => setJobs(d.jobs || [])).catch(() => {})
+  }, [])
   useEffect(() => { load() }, [load])
+  const runner = useJobRunner(() => load())
   async function runNow() {
-    setBusy(true); setRun(null)
-    try { setRun(await api('/api/admin/run-autopilot', { method: 'POST' })); load() }
-    catch (e: any) { setRun({ ok: false, reason: e.message }) }
+    setBusy(true); setRun(null); runner.reset()
+    try {
+      const r = await api('/api/admin/run-autopilot', { method: 'POST' })
+      setRun(r)
+      if (r.jobId) await runner.run(r.jobId, `Píšem: ${r.topic}`)
+      load()
+    } catch (e: any) { setRun({ ok: false, reason: e.message }) }
     setBusy(false)
   }
   const fmtDate = (d: string) => { try { return new Date(d).toLocaleDateString('sk-SK') } catch { return '' } }
@@ -180,6 +253,7 @@ function Overview({ sess }: { sess: Session }) {
       {blocking.length > 0 && (
         <div className="awarn"><Ic n="warn" s={15} /> Chýba: {blocking.join(' a ')}. Doplň v <b>Integrácie</b>.</div>
       )}
+      {statsErr && <div className="awarn"><Ic n="warn" s={15} /> Štatistiky sa nenačítali: {statsErr}</div>}
       <div className="stat-row" style={{ marginBottom: 16 }}>
         <div className="stat-box2"><b>{stats ? stats.articles.published : '—'}</b><span>publikovaných článkov</span></div>
         <div className="stat-box2"><b>{stats ? stats.articles.total : '—'}</b><span>článkov v admine</span></div>
@@ -199,9 +273,29 @@ function Overview({ sess }: { sess: Session }) {
       </div>
       <div className="acard">
         <h3>Rýchle generovanie</h3>
-        <p className="amut sm">Spustí jeden cyklus: vyberie tému (z plánu alebo ju navrhne), napíše článok s fotkou a prelinkovaním a podľa nastavení ho publikuje. Trvá pol minúty.</p>
-        <button className="abtn" onClick={runNow} disabled={busy}><Ic n="play" s={15} /> {busy ? 'Pracujem… (~30 s)' : 'Vygenerovať článok teraz'}</button>
-        {run && <p className="amut sm" style={{ marginTop: 10 }}>{run.ok ? (run.created ? `Hotovo — vytvorený článok „${run.created}". Nájdeš ho v Článkoch.` : (run.skipped ? `Preskočené: ${run.skipped}` : 'Hotovo.')) : `Chyba: ${run.reason || run.error}`}</p>}
+        <p className="amut sm">Vyberie tému (z plánu, alebo ju navrhne), napíše článok po častiach — osnova, úvod, sekcie, záver, SEO a fotky — a podľa nastavení ho publikuje. Trvá 1–2 minúty a priebeh vidíš nižšie.</p>
+        <button className="abtn" onClick={runNow} disabled={busy}><Ic n="play" s={15} /> {busy ? 'Pracujem…' : 'Vygenerovať článok teraz'}</button>
+        {runner.state && <JobProgress state={runner.state} />}
+        {run && !run.ok && <p className="aerr" style={{ marginTop: 10 }}>{run.reason || run.error}</p>}
+      </div>
+      <div className="acard">
+        <h3>Posledné generovania</h3>
+        <p className="amut sm">Ak niečo nevzniklo, tu je dôvod — netreba hádať.</p>
+        <table className="atab2"><tbody>
+          {jobs.map(j => (
+            <tr key={j.id}>
+              <td><b>{j.topic}</b><br /><span className="amut sm">{j.category}{j.auto ? ' · autopilot' : ''}{j.total_sections ? ` · ${j.done_sections}/${j.total_sections + 2} častí` : ''}</span></td>
+              <td>
+                <span className={`apill ${j.status === 'done' ? 'good' : j.status === 'error' ? 'bad' : ''}`}>
+                  {j.status === 'done' ? 'hotové' : j.status === 'error' ? 'chyba' : 'rozrobené'}
+                </span>
+                {j.error && <div className="aerr sm" style={{ marginTop: 4, marginBottom: 0 }}>{j.error}</div>}
+              </td>
+              <td className="ar amut sm">{j.slug ? <a href={`/${j.slug}/`} target="_blank" rel="noreferrer" style={{ color: 'var(--acc)' }}>otvoriť</a> : fmtDate(j.created_at)}</td>
+            </tr>
+          ))}
+          {jobs.length === 0 && <tr><td className="amut sm">Zatiaľ žiadne generovanie.</td></tr>}
+        </tbody></table>
       </div>
     </>
   )
@@ -321,16 +415,34 @@ function Editor({ initial, images, onSaved }: { initial: any; images: ImageR[]; 
 function Generate({ sess }: { sess: Session }) {
   const [topic, setTopic] = useState('')
   const [cat, setCat] = useState('Marketing Tipy')
+  const [keywords, setKeywords] = useState('')
+  const [words, setWords] = useState<number | ''>('')
   const [busy, setBusy] = useState(false)
   const [editor, setEditor] = useState<any>(null)
-  const [images, setImages] = useState<ImageR[]>([])
   const [err, setErr] = useState('')
-  async function gen() {
-    setBusy(true); setErr(''); setEditor(null)
+
+  const openArticle = useCallback(async (r: any) => {
+    const id = r?.article?.id
+    if (!id) return
     try {
-      const d = await api('/api/admin/generate', { method: 'POST', body: JSON.stringify({ topic, category: cat }) })
-      setImages(d.images || [])
-      setEditor({ ...emptyEditor, title: d.article.title, category: d.article.category, tags: (d.article.tags || []).join(', '), content: d.article.content, excerpt: d.article.excerpt, meta_title: d.article.meta_title, meta_desc: d.article.meta_desc, meta_keywords: d.article.meta_keywords, image_url: d.images?.[0]?.url || '', image_credit: d.images?.[0]?.credit || '' })
+      const { article: a } = await api(`/api/admin/articles/${id}`)
+      setEditor({
+        id: a.id, title: a.title, slug: a.slug, category: a.category, tags: (a.tags || []).join(', '),
+        content: a.content, excerpt: a.excerpt, meta_title: a.meta_title, meta_desc: a.meta_desc,
+        meta_keywords: a.meta_keywords, image_url: a.image_url, image_credit: a.image_credit, status: a.status,
+      })
+    } catch (e: any) { setErr(e.message) }
+  }, [])
+  const runner = useJobRunner(openArticle)
+
+  async function gen() {
+    setBusy(true); setErr(''); setEditor(null); runner.reset()
+    try {
+      const d = await api('/api/admin/generate', {
+        method: 'POST',
+        body: JSON.stringify({ topic, category: cat, keywords, wordCount: words || undefined }),
+      })
+      await runner.run(d.jobId, 'Pripravujem osnovu…')
     } catch (e: any) { setErr(e.message) }
     setBusy(false)
   }
@@ -338,15 +450,23 @@ function Generate({ sess }: { sess: Session }) {
     <>
       <div className="acard">
         <h3>Generovať článok cez AI</h3>
-        {!sess.ai && <div className="awarn"><Ic n="warn" s={15} /> Najprv nastav <code>OPENAI_API_KEY</code>.</div>}
+        {!sess.ai && <div className="awarn"><Ic n="warn" s={15} /> Najprv doplň OpenAI kľúč v <b>Integráciách</b>.</div>}
+        {!sess.pexels && !sess.pixabay && <div className="awarn"><Ic n="warn" s={15} /> Bez Pexels/Pixabay kľúča bude článok bez fotiek.</div>}
         <label className="alab">Téma / kľúčové slovo</label>
         <input className="ain" placeholder="napr. Ako začať s cold emailingom v roku 2026" value={topic} onChange={e => setTopic(e.target.value)} />
-        <label className="alab">Kategória</label>
-        <select className="ain" value={cat} onChange={e => setCat(e.target.value)}>{CATEGORIES.map(c => <option key={c}>{c}</option>)}</select>
+        <div className="agrid3">
+          <div><label className="alab">Kategória</label><select className="ain" value={cat} onChange={e => setCat(e.target.value)}>{CATEGORIES.map(c => <option key={c}>{c}</option>)}</select></div>
+          <div><label className="alab">SEO kľúčové slová (voliteľné)</label><input className="ain" value={keywords} onChange={e => setKeywords(e.target.value)} placeholder="cold email, oslovenie firiem" /></div>
+          <div><label className="alab">Dĺžka (slov, voliteľné)</label><input className="ain" type="number" min={400} max={3000} value={words} onChange={e => setWords(e.target.value ? +e.target.value : '')} placeholder="podľa nastavení" /></div>
+        </div>
         {err && <div className="aerr">{err}</div>}
-        <button className="abtn" onClick={gen} disabled={busy || !topic}><Ic n="generate" s={15} /> {busy ? 'Generujem…' : 'Vygenerovať'}</button>
+        <button className="abtn" onClick={gen} disabled={busy || !!runner.state && !runner.state.error && runner.state.current < runner.state.total || !topic}>
+          <Ic n="generate" s={15} /> {busy ? 'Spúšťam…' : 'Vygenerovať'}
+        </button>
+        <p className="amut sm" style={{ marginTop: 8 }}>Článok sa píše po častiach (osnova → úvod → sekcie → záver → SEO a fotky). Trvá to 1–2 minúty a priebeh vidíš nižšie — okno môžeš nechať otvorené.</p>
+        {runner.state && <JobProgress state={runner.state} />}
       </div>
-      {editor && <Modal title="Nový článok" onClose={() => setEditor(null)}><Editor initial={editor} images={images} onSaved={() => setEditor(null)} /></Modal>}
+      {editor && <Modal title="Vygenerovaný článok" onClose={() => setEditor(null)}><Editor initial={editor} images={[]} onSaved={() => setEditor(null)} /></Modal>}
     </>
   )
 }
@@ -368,7 +488,15 @@ function Articles() {
   useEffect(() => { load(); loadStatic('') }, [load, loadStatic])
   const reload = () => { load(); loadStatic(sq) }
   async function del(id: number) { if (!confirm('Zmazať článok?')) return; await api(`/api/admin/articles/${id}`, { method: 'DELETE' }); reload() }
-  function openEdit(a: any) { setEdit({ id: a.id, title: a.title, slug: a.slug, category: a.category, tags: (a.tags || []).join(', '), content: a.content, excerpt: a.excerpt, meta_title: a.meta_title, meta_desc: a.meta_desc, meta_keywords: a.meta_keywords, image_url: a.image_url, image_credit: a.image_credit, status: a.status }) }
+  // Zoznam ide bez `content` (kvôli rýchlosti) — telo dotiahni až pri otvorení.
+  async function openEdit(a: any) {
+    setBusySlug('db-' + a.id)
+    try {
+      const { article: f } = await api(`/api/admin/articles/${a.id}`)
+      setEdit({ id: f.id, title: f.title, slug: f.slug, category: f.category, tags: (f.tags || []).join(', '), content: f.content, excerpt: f.excerpt, meta_title: f.meta_title, meta_desc: f.meta_desc, meta_keywords: f.meta_keywords, image_url: f.image_url, image_credit: f.image_credit, status: f.status })
+    } catch (e: any) { setErr(e.message) }
+    setBusySlug('')
+  }
   async function editStatic(slug: string) {
     setBusySlug(slug)
     try {
@@ -458,11 +586,21 @@ function Plan() {
       }),
     }); setEdit(null); load()
   }
+  const runner = useJobRunner(() => load())
   async function genNow(id: number) {
-    setGenId(id); setMsg('')
-    try { const r = await api(`/api/admin/plan/${id}`, { method: 'POST', body: JSON.stringify({ action: 'generate' }) }); setMsg(r.created ? `Vygenerované — článok "${r.created}" je v Články.` : 'Hotovo'); load() }
-    catch (e: any) { setMsg(e.message) }
+    setGenId(id); setMsg(''); runner.reset()
+    try {
+      const r = await api(`/api/admin/plan/${id}`, { method: 'POST', body: JSON.stringify({ action: 'generate' }) })
+      if (!r.jobId) { setMsg(r.reason || 'Nepodarilo sa spustiť'); setGenId(0); return }
+      const done = await runner.run(r.jobId, 'Pripravujem osnovu…')
+      if (done?.article?.slug) setMsg(`Hotovo — článok „${done.article.slug}" nájdeš v Článkoch.`)
+      load()
+    } catch (e: any) { setMsg(e.message) }
     setGenId(0)
+  }
+  async function retry(id: number) {
+    try { await api(`/api/admin/plan/${id}`, { method: 'POST', body: JSON.stringify({ action: 'retry' }) }); load() }
+    catch (e: any) { setMsg(e.message) }
   }
   return (
     <>
@@ -485,6 +623,7 @@ function Plan() {
           <input className="ain" type="datetime-local" value={when} onChange={e => setWhen(e.target.value)} />
         </div>
         <button className="abtn" onClick={add} disabled={!topic}><Ic n="plus" s={15} /> Pridať</button>
+        {runner.state && <JobProgress state={runner.state} />}
         <table className="atab2 mt plan-tab"><thead><tr>
           <th>Téma / kľúčové slová</th><th>Kategória</th><th>Dátum</th><th>Slov</th><th>Stav</th><th className="ar">Akcie</th>
         </tr></thead><tbody>
@@ -509,8 +648,12 @@ function Plan() {
               <td><span className="apill">{p.category}</span></td>
               <td className="amut sm">{p.scheduled_for ? new Date(p.scheduled_for).toLocaleString('sk-SK', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
               <td className="amut sm">{p.word_count || '—'}</td>
-              <td><span className={`apill ${p.status === 'done' ? 'good' : p.status === 'error' ? 'bad' : ''}`}>{p.status}</span></td>
+              <td>
+                <span className={`apill ${p.status === 'done' ? 'good' : p.status === 'error' ? 'bad' : ''}`}>{p.status}</span>
+                {p.note && <div className="amut sm" style={{ marginTop: 4, color: p.status === 'error' ? '#dc2626' : undefined }}>{p.note}</div>}
+              </td>
               <td className="ar" style={{ whiteSpace: 'nowrap' }}>
+                {p.status === 'error' && <button className="abtn ghost sm" onClick={() => retry(p.id)}>Skúsiť znova</button>}
                 {p.status !== 'done' && <button className="abtn ghost sm" disabled={genId === p.id} onClick={() => genNow(p.id)}><Ic n="play" s={13} /> {genId === p.id ? '…' : 'Teraz'}</button>}
                 <button className="icbtn" title="Upraviť" onClick={() => startEdit(p)}><Ic n="edit" s={16} /></button>
                 <button className="icbtn" title="Zmazať" onClick={() => del(p.id)}><Ic n="trash" s={16} /></button>
@@ -633,7 +776,19 @@ function Messages({ onChange }: { onChange: () => void }) {
 function Settings() {
   const [s, setS] = useState<any>(null)
   const [msg, setMsg] = useState('')
-  useEffect(() => { api('/api/admin/settings').then(d => setS(d.settings)).catch(() => {}) }, [])
+  const [loadErr, setLoadErr] = useState('')
+  const [models, setModels] = useState<string[]>([])
+  const [dbMsg, setDbMsg] = useState('')
+  const [dbBusy, setDbBusy] = useState(false)
+  useEffect(() => { api('/api/admin/settings').then(d => setS(d.settings)).catch(e => setLoadErr(e.message)) }, [])
+  useEffect(() => { api('/api/admin/models').then(d => setModels(d.models || [])).catch(() => {}) }, [])
+  async function checkDb() {
+    setDbBusy(true); setDbMsg('')
+    try { const r = await api('/api/admin/migrate', { method: 'POST', timeoutMs: 65000 }); setDbMsg(`Databáza je v poriadku (${r.tables.length} tabuliek skontrolovaných).`) }
+    catch (e: any) { setDbMsg('Chyba: ' + e.message) }
+    setDbBusy(false)
+  }
+  if (loadErr) return <div className="acard"><div className="aerr">Nastavenia sa nenačítali: {loadErr}</div><button className="abtn ghost" onClick={() => location.reload()}>Skúsiť znova</button></div>
   if (!s) return <div className="acard">Načítavam…</div>
   const set = (k: string, v: any) => setS((p: any) => ({ ...p, [k]: v }))
   const days = [['Po', 1], ['Ut', 2], ['St', 3], ['Št', 4], ['Pi', 5], ['So', 6], ['Ne', 0]] as const
@@ -657,7 +812,12 @@ function Settings() {
         <button key={d} type="button" className={`aday${s.publishDays.includes(d) ? ' on' : ''}`} onClick={() => set('publishDays', s.publishDays.includes(d) ? s.publishDays.filter((x: number) => x !== d) : [...s.publishDays, d])}>{lab}</button>
       ))}</div>
       <div className="agrid3">
-        <div><label className="alab">AI model</label><select className="ain" value={s.model} onChange={e => set('model', e.target.value)}><option value="gpt-4o-mini">gpt-4o-mini (lacný)</option><option value="gpt-4o">gpt-4o (kvalitnejší)</option></select></div>
+        <div>
+          <label className="alab">AI model {models.length ? '(z tvojho OpenAI účtu)' : ''}</label>
+          <select className="ain" value={s.model} onChange={e => set('model', e.target.value)}>
+            {(models.length ? Array.from(new Set([s.model, ...models])) : [s.model, 'gpt-4o', 'gpt-4o-mini']).map((m: string) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
         <div><label className="alab">Dĺžka článku (slov)</label><input className="ain" type="number" value={s.wordCount} onChange={e => set('wordCount', +e.target.value)} /></div>
         <div><label className="alab">Max. slov v názve</label><input className="ain" type="number" min={3} max={16} value={s.titleMaxWords} onChange={e => set('titleMaxWords', +e.target.value)} /></div>
       </div>
@@ -671,6 +831,13 @@ function Settings() {
       <label className="alab">Predmet newslettera</label>
       <input className="ain" value={s.newsletterSubject} onChange={e => set('newsletterSubject', e.target.value)} />
       <div className="arow mt"><button className="abtn" onClick={save}>Uložiť nastavenia</button>{msg && <span className="amut sm">{msg}</span>}</div>
+      <hr style={{ border: 0, borderTop: '1px solid var(--bd)', margin: '20px 0' }} />
+      <h3>Stav systému</h3>
+      <p className="amut sm">Schéma databázy sa zámerne nevytvára pri každom načítaní stránky (spomaľovalo to admin). Ak si pridal novú funkciu a niečo hlási chýbajúci stĺpec, klikni sem.</p>
+      <div className="arow wrap">
+        <button className="abtn ghost" onClick={checkDb} disabled={dbBusy}>{dbBusy ? 'Kontrolujem…' : 'Skontrolovať databázu'}</button>
+        {dbMsg && <span className="amut sm">{dbMsg}</span>}
+      </div>
     </div>
   )
 }
@@ -887,4 +1054,8 @@ body{margin:0;background:var(--bg);font-family:'Inter',-apple-system,sans-serif;
 .plan-tab tr.pedit td{background:var(--acc-sft)}
 .plan-tab tr.pedit .ain{margin-bottom:6px}
 .abtn.sm{padding:6px 10px;font-size:12px;margin-right:4px}
+.jobbox{margin-top:12px;background:var(--bg);border:1px solid var(--bd);border-radius:10px;padding:12px 14px}
+.jobbar{height:6px;border-radius:50px;background:var(--bd);overflow:hidden;margin-bottom:8px}
+.jobbar span{display:block;height:100%;background:var(--acc);border-radius:50px;transition:width .4s ease}
+.aerr.sm{font-size:12px}
 `

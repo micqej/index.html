@@ -1,4 +1,4 @@
-import { getSql, ensureSchema } from './db'
+import { db, dbSafe } from './db'
 
 export interface AutopilotSettings {
   autopilotEnabled: boolean
@@ -28,14 +28,14 @@ export const DEFAULT_SETTINGS: AutopilotSettings = {
   postsPerWeek: 2,
   publishDays: [1, 4],
   publishHour: 9,
-  model: 'gpt-4o-mini',
+  model: 'gpt-4o',
   temperature: 0.7,
   tone: 'Praktický, priateľský a odborný. Bez omáčky — konkrétne, použiteľné tipy pre slovenské firmy. Píš po slovensky.',
-  wordCount: 800,
+  wordCount: 1200,
   defaultCategory: 'Marketing Tipy',
   randomCategory: true,
   imageSource: 'both',
-  imageCount: 1,
+  imageCount: 2,
   autoInterlink: true,
   linkCount: 2,
   titleMaxWords: 8,
@@ -49,27 +49,41 @@ export const DEFAULT_SETTINGS: AutopilotSettings = {
 
 const KEY = 'autopilot'
 
+/**
+ * Nastavenia sa čítajú pri KAŽDOM generovaní aj pri každom API volaní.
+ * Bez cache to bolo 5–8 zbytočných round-tripov na jeden request (a pri
+ * zaseknutom pooleri 5× šanca na zamrznutie). TTL je krátke, takže zmena
+ * v admine sa prejaví hneď (save cache aj tak invaliduje).
+ */
+let cache: { at: number; value: AutopilotSettings } | null = null
+const TTL_MS = 30_000
+
+export function invalidateSettings(): void { cache = null }
+
 export async function getSettings(): Promise<AutopilotSettings> {
-  const sql = getSql()
-  if (!sql) return DEFAULT_SETTINGS
-  try {
-    await ensureSchema()
-    const rows = await sql`SELECT value FROM settings WHERE key = ${KEY} LIMIT 1`
-    if (!rows[0]) return DEFAULT_SETTINGS
+  if (cache && Date.now() - cache.at < TTL_MS) return cache.value
+  const rows = await dbSafe(sql => sql`SELECT value FROM settings WHERE key = ${KEY} LIMIT 1`, [] as any[])
+  let value = DEFAULT_SETTINGS
+  if (rows[0]) {
     const v: any = rows[0].value
-    const obj = typeof v === 'string' ? JSON.parse(v) : v
-    return { ...DEFAULT_SETTINGS, ...obj }
-  } catch {
-    return DEFAULT_SETTINGS
+    try {
+      const obj = typeof v === 'string' ? JSON.parse(v) : v
+      value = { ...DEFAULT_SETTINGS, ...obj }
+    } catch { /* poškodený JSON → defaulty */ }
+    cache = { at: Date.now(), value }
+  } else if (rows.length === 0) {
+    // Nič v DB (alebo DB nedostupná) — necachuj defaulty natvrdo dlho.
+    cache = { at: Date.now(), value }
   }
+  return value
 }
 
 export async function saveSettings(patch: Partial<AutopilotSettings>): Promise<AutopilotSettings> {
-  const sql = getSql()
-  if (!sql) throw new Error('DB not configured')
-  await ensureSchema()
+  invalidateSettings()
   const next = { ...(await getSettings()), ...patch }
-  await sql`INSERT INTO settings (key, value) VALUES (${KEY}, ${sql.json(next as any)})
-    ON CONFLICT (key) DO UPDATE SET value = ${sql.json(next as any)}`
+  const r = await db(sql => sql`INSERT INTO settings (key, value) VALUES (${KEY}, ${sql.json(next as any)})
+    ON CONFLICT (key) DO UPDATE SET value = ${sql.json(next as any)}`)
+  if (r === null) throw new Error('DB nie je nastavená')
+  invalidateSettings()
   return next
 }

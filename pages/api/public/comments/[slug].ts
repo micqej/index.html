@@ -3,6 +3,9 @@ import { approvedComments, addComment } from '../../../../lib/comments'
 import { getSiteSettings } from '../../../../lib/siteSettings'
 import { dbReady } from '../../../../lib/db'
 
+// Strop na funkciu — bez neho ju platforma nechá visieť 300 s (=zamrznutý admin).
+export const config = { maxDuration: 10 }
+
 async function verifyRecaptcha(token: string, secret: string): Promise<boolean> {
   if (!secret) return true // recaptcha nie je nakonfigurovaná → preskoč
   if (!token) return false

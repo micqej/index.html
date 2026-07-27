@@ -1,9 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { requireAdmin } from '../../../../lib/adminAuth'
 import { deletePlan, updatePlan } from '../../../../lib/plan'
-import { generatePlanItemNow } from '../../../../lib/autopilot'
+import { generatePlanItemNow, retryPlanItem } from '../../../../lib/autopilot'
 
-export const config = { maxDuration: 60 }
+export const config = { maxDuration: 20 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (!requireAdmin(req, res)) return
@@ -27,8 +27,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({ plan: updated })
     }
     if (req.method === 'POST' && req.body?.action === 'generate') {
+      // Vráti len ID úlohy — písanie beží po krokoch cez /api/admin/generate-tick
       const r = await generatePlanItemNow(id)
       return res.status(r.ok ? 200 : 400).json(r)
+    }
+    if (req.method === 'POST' && req.body?.action === 'retry') {
+      await retryPlanItem(id)
+      return res.status(200).json({ ok: true })
     }
     return res.status(405).end()
   } catch (e: any) {

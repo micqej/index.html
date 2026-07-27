@@ -43,9 +43,12 @@ export function isAuthed(req: NextApiRequest): boolean {
 
 export function setSession(res: NextApiResponse): void {
   const maxAge = 60 * 60 * 24 * 30 // 30 days
+  // Secure len v produkcii — na http://localhost prehliadač Secure cookie zahodí
+  // a admin sa lokálne nedá ani prihlásiť (=nedá sa ladiť).
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : ''
   res.setHeader(
     'Set-Cookie',
-    `${COOKIE}=${expectedToken()}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}; Secure`
+    `${COOKIE}=${expectedToken()}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`
   )
 }
 

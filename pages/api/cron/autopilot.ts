@@ -1,7 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { runAutopilotBatch } from '../../../lib/autopilot'
 
-export const config = { maxDuration: 60 }
+// Vercel dnes dovolí funkcii bežať 300 s. Písanie článku po krokoch sa doň
+// pohodlne zmestí; rozpočet 240 s necháva rezervu na dopísanie a uloženie.
+export const config = { maxDuration: 300 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   // Vercel Cron posiela hlavičku Authorization: Bearer <CRON_SECRET> ak je nastavený.
@@ -10,7 +12,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(401).json({ error: 'Neautorizované' })
   }
   try {
-    const result = await runAutopilotBatch(5, false)
+    const result = await runAutopilotBatch({ budgetMs: 240_000, maxArticles: 3 })
     return res.status(200).json(result)
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: e.message || 'Chyba' })

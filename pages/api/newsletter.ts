@@ -4,6 +4,9 @@ import { dbReady } from '../../lib/db'
 import { fireSubscriberWebhook, buildSubscriberPayload } from '../../lib/webhook'
 import { SITE_URL } from '../../lib/site'
 
+// Strop na funkciu — bez neho ju platforma nechá visieť 300 s (=zamrznutý admin).
+export const config = { maxDuration: 15 }
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
   const { email, source, name } = req.body || {}
