@@ -7,7 +7,7 @@ import SEO from '../../components/SEO'
 import { getAllPosts, getPostBySlug, getAllSlugs, mergePosts, formatDate, Post } from '../../lib/posts'
 import { getPublishedPosts } from '../../lib/articles'
 import { renderWordPressContent, extractHeadings } from '../../lib/renderContent'
-import { SITE_URL } from '../../lib/site'
+import { SITE_URL, OG_VERSION } from '../../lib/site'
 
 interface Props {
   post: Post
@@ -30,7 +30,14 @@ export default function PostPage({ post, related, headings, cleanContent }: Prop
         ogDesc={post.og_desc || post.meta_desc}
         keywords={post.meta_keywords}
         type="article"
-        image={post.image || `${SITE_URL}/api/og/?title=${encodeURIComponent(post.title.slice(0, 80))}`}
+        /* Fotku článku vždy posielame cez /api/og — surový Pexels obrázok má 940×650,
+           čo je pod minimom FB (1200) a v zlom pomere, takže náhľad vychádzal orezaný. */
+        image={
+          `${SITE_URL}/api/og/?v=${OG_VERSION}` +
+          `&title=${encodeURIComponent(post.title.slice(0, 80))}` +
+          `&eyebrow=${encodeURIComponent(cat)}` +
+          (post.image ? `&img=${encodeURIComponent(post.image)}` : '')
+        }
         publishedTime={post.date}
         author={post.author}
       />

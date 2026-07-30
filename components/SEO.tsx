@@ -36,6 +36,9 @@ export default function SEO({
   const path = router.asPath ? router.asPath.split('?')[0] : '/'
   const resolvedCanonical = canonical || `${SITE_URL}${path === '/' ? '/' : path}`
   const robots = noindex ? 'noindex, nofollow' : 'index, follow'
+  // Rozmery/typ hlásime LEN pri našom generovanom náhľade (vždy 1200×630 PNG).
+  // Pri cudzom obrázku by to bola lož a FB podľa nej poskladá kartu nakrivo.
+  const isGeneratedOg = image.includes('/api/og/')
   const pageSchema =
     type === 'article'
       ? {
@@ -86,9 +89,9 @@ export default function SEO({
       <meta property="og:url" content={resolvedCanonical} />
       <meta property="og:locale" content="sk_SK" />
       <meta property="og:image" content={image} />
-      <meta property="og:image:width" content="1200" />
-      <meta property="og:image:height" content="630" />
-      <meta property="og:image:type" content="image/png" />
+      {isGeneratedOg && <meta property="og:image:width" content="1200" />}
+      {isGeneratedOg && <meta property="og:image:height" content="630" />}
+      {isGeneratedOg && <meta property="og:image:type" content="image/png" />}
       <meta property="og:image:alt" content={ogTitle || fullTitle} />
       {type === 'article' && publishedTime && <meta property="article:published_time" content={publishedTime} />}
       {type === 'article' && author && <meta property="article:author" content={author} />}

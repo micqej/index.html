@@ -4,7 +4,11 @@ export const DEFAULT_DESCRIPTION =
   'Digitálna agentúra pre rastúce firmy. Cold email, SEO, sociálne médiá, email marketing, tvorba webov a e-shopov na Slovensku.'
 // Raster (PNG) — sociálne siete SVG náhľad neukazujú. Generuje sa cez /api/og.
 // Trailing slash kvôli trailingSlash:true (inak 308 redirect, ktorý nie každý scraper nasleduje).
-export const DEFAULT_OG_IMAGE = `${SITE_URL}/api/og/`
+//
+// OG_VERSION: FB/LinkedIn si náhľad cachujú podľa URL a sami ho neprebijú.
+// Po každej zmene vzhľadu /api/og zvýš číslo — inak sa všade ďalej ukazuje starý obrázok.
+export const OG_VERSION = '2'
+export const DEFAULT_OG_IMAGE = `${SITE_URL}/api/og/?v=${OG_VERSION}`
 
 export const ORGANIZATION_SCHEMA = {
   '@context': 'https://schema.org',
