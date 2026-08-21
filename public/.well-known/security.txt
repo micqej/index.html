@@ -1,0 +1,4 @@
+Contact: mailto:info@monetico.sk
+Expires: 2027-08-21T00:00:00.000Z
+Preferred-Languages: sk, en
+Canonical: https://www.monetico.sk/.well-known/security.txt

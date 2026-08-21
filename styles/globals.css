@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Space+Mono:wght@400;700&display=swap');
-
 :root {
   /* ── BRUTALIST · purple + yellow ── */
   --ink: #0e0e0c;
@@ -29,9 +27,7 @@
   --side: 64px;
   --maxw: 1340px;
 
-  --font-display: 'Inter', sans-serif;
-  --font-body: 'Inter', -apple-system, sans-serif;
-  --font-mono: 'Space Mono', monospace;
+  /* --font-display / --font-body / --font-mono nastavuje next/font v pages/_app.tsx */
 }
 
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
