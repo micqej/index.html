@@ -3,7 +3,7 @@ import { getSettings, AutopilotSettings } from './settings'
 import { planOutline, writeSection, writeSeo, Outline, cleanHtml } from './aiContent'
 import { imagesForArticle, ImageResult } from './images'
 import { linkPool, embedImages } from './links'
-import { SERVICE_LINKS, WRITING_STYLES } from './text'
+import { SERVICE_LINKS, WRITING_STYLES, productLinksFor } from './text'
 import { createArticle, listArticlesLite } from './articles'
 import { markPlan } from './plan'
 import { quotaMessage } from './quota'
@@ -138,7 +138,7 @@ function currentStep(job: GenJob): number {
 }
 
 /** Vyberie interné odkazy pre danú sekciu (rozloží ich po článku, nie všetky do jednej). */
-function linksForSection(all: { title: string; slug: string }[], index: number, sectionCount: number, linkCount: number) {
+function linksForSection(all: { title: string; slug?: string; url?: string; note?: string }[], index: number, sectionCount: number, linkCount: number) {
   if (!linkCount || !all.length) return []
   // odkazy dávaj do prostredných sekcií, max 1 na sekciu
   const targets: number[] = []
@@ -188,8 +188,10 @@ export async function tickJob(id: number): Promise<TickResult> {
       // index -1 = úvod (uložený ako prvý prvok), 0..n-1 sekcie, n = záver
       const idx = job.step_index          // 0 = úvod, 1..n = sekcie, n+1 = záver
       const writeIndex = idx - 1          // -1 úvod, 0..n-1 sekcie, n záver
+      // vlastné nástroje (Colldly) idú prvé — sedia len na relevantné témy
+      const produkty = productLinksFor(job.topic, job.category, job.keywords)
       const links = s.autoInterlink && s.linkCount > 0
-        ? [...SERVICE_LINKS, ...(await linkPool(job.category, undefined, 8).catch(() => []))]
+        ? [...produkty, ...SERVICE_LINKS, ...(await linkPool(job.category, undefined, 8).catch(() => []))]
         : []
       const html = await writeSection({
         outline,

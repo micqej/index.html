@@ -222,7 +222,7 @@ export interface SectionOpts {
   style?: string
   keywords?: string
   /** interné odkazy, ktoré má sekcia použiť (už vybrané pre túto sekciu) */
-  links?: { title: string; slug: string }[]
+  links?: { title: string; slug?: string; url?: string; note?: string }[]
 }
 
 /** KROK 2 — jedna sekcia (alebo úvod / záver). Vracia čisté HTML. */
@@ -240,8 +240,15 @@ export async function writeSection(o: SectionOpts): Promise<string> {
   ].filter(Boolean).join('\n')
 
   const linkHint = o.links?.length
-    ? 'Prirodzene vlož tieto interné odkazy (len tam, kde vo vete naozaj dávajú zmysel, formát <a href="/SLUG/">text</a>):\n' +
-      o.links.map(l => `- /${l.slug}/ — ${l.title}`).join('\n')
+    ? 'Prirodzene vlož tieto odkazy (len tam, kde vo vete naozaj dávajú zmysel, formát <a href="ADRESA">text</a>):\n' +
+      o.links.map(l => {
+        const adresa = l.url || `/${l.slug}/`
+        // pri vlastnom nástroji dopĺňame, ČO vie — nech to nie je holý odkaz
+        return l.note
+          ? `- ${adresa} — ${l.title}: ${l.note}. Spomeň ho ako nástroj, cez ktorý kampane reálne posielame, `
+            + 'jednou–dvoma vetami a konkrétne (čo rieši), nie ako reklamný slogan. Najviac raz v celom článku.'
+          : `- ${adresa} — ${l.title}`
+      }).join('\n')
     : ''
 
   const common = [

@@ -31,6 +31,36 @@ export const SERVICE_LINKS: { title: string; slug: string }[] = [
   { title: 'tvorba webov a e-shopov', slug: 'sluzby/tvorba-webov' },
 ]
 
+/**
+ * Vlastné nástroje, na ktoré sa v článkoch odkazuje. Nie sú to podstránky webu,
+ * preto majú absolútnu adresu. Použijú sa LEN keď téma naozaj sedí — inak by
+ * sa Colldly spomínalo aj v článku o SEO.
+ */
+export interface ProductLink { title: string; url: string; note: string; keywords: string[] }
+
+export const PRODUCT_LINKS: ProductLink[] = [
+  {
+    title: 'Colldly',
+    url: 'https://colldly.com',
+    note:
+      'náš vlastný nástroj na cold emailing: rozposielanie z viacerých schránok s rotáciou a zahrievaním, ' +
+      'automatické sekvencie a nadväzujúce e-maily, sledovanie otvorení, klikov a odpovedí, ' +
+      'strážene denných limitov a vyraďovanie kontaktov, ktoré odpovedali alebo sa odhlásili',
+    keywords: [
+      'cold email', 'cold-email', 'coldemail', 'cold mailing', 'coldmailing', 'studen',
+      'oslovenie', 'oslovovanie', 'outreach', 'akvizíc', 'akvizic',
+      'email marketing', 'e-mail marketing', 'emailov', 'e-mailov', 'newsletter',
+      'doručiteľnos', 'dorucitelnos', 'schránk', 'schrank', 'sekvenc', 'kampan',
+    ],
+  },
+]
+
+/** Vyberie nástroje, ktoré k téme naozaj patria (téma + kategória + kľúčové slová). */
+export function productLinksFor(...texty: (string | undefined)[]): ProductLink[] {
+  const hay = texty.filter(Boolean).join(' ').toLowerCase()
+  return PRODUCT_LINKS.filter(p => p.keywords.some(k => hay.includes(k)))
+}
+
 /** Náhodné štýly písania (keď je v nastaveniach zapnutý náhodný štýl). */
 export const WRITING_STYLES: string[] = [
   'Praktický návod krok za krokom s konkrétnymi tipmi.',
