@@ -211,6 +211,19 @@ export async function migrate(): Promise<string[]> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )`; done.push('subscribers')
 
+    // Ochrana newslettra pred botmi: normalizovaná adresa (gmail bez bodiek),
+    // stav (ok/spam) a IP kvôli stropu na počet prihlásení za hodinu.
+    await sql`ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS email_norm TEXT`
+    await sql`ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ok'`
+    await sql`ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS ip TEXT NOT NULL DEFAULT ''`
+    await sql`UPDATE subscribers SET email_norm = CASE
+      WHEN email LIKE '%@gmail.com' OR email LIKE '%@googlemail.com'
+        THEN replace(split_part(split_part(email,'@',1),'+',1), '.', '') || '@gmail.com'
+      ELSE split_part(split_part(email,'@',1),'+',1) || '@' || split_part(email,'@',2)
+      END WHERE email_norm IS NULL`
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS subscribers_email_norm_idx ON subscribers (email_norm)`
+    done.push('subscribers.email_norm+status+ip')
+
     await sql`CREATE TABLE IF NOT EXISTS comments (
       id         SERIAL PRIMARY KEY,
       slug       TEXT NOT NULL,

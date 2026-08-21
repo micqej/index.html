@@ -40,6 +40,19 @@ export interface ProductLink { title: string; url: string; note: string; keyword
 
 export const PRODUCT_LINKS: ProductLink[] = [
   {
+    title: 'Pipelly',
+    url: 'https://pipelly.com',
+    note:
+      'náš vlastný systém na riadenie obchodu: kontakty a firmy na jednom mieste, obchodné prípady a lievik, ' +
+      'cenové ponuky, termíny, faktúry aj klientsky portál, a platí sa paušálom za tím, nie za každého používateľa',
+    keywords: [
+      'crm', 'evidencia klientov', 'evidencia zákazník', 'obchodný prípad', 'obchodné prípady',
+      'lievik', 'pipeline', 'sledovanie dopytov', 'správa dopytov', 'databáza klientov',
+      'cenová ponuka', 'cenové ponuky', 'fakturác', 'faktúr', 'klientsky portál',
+      'excel', 'tabuľk', 'nezabudn', 'follow-up', 'ponuk',
+    ],
+  },
+  {
     title: 'Colldly',
     url: 'https://colldly.com',
     note:

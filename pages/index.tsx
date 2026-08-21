@@ -162,14 +162,22 @@ export default function Home({ recentPosts, categories }: Props) {
         </div>
         <div>
           <p style={{ color: 'var(--muted-on-y)', marginBottom: '22px', lineHeight: '1.7' }}>Žiadny spam. Len overené stratégie z praxe, ktoré fungujú pre slovenské firmy.</p>
-          <form className="newsletter-form" onSubmit={async e => {
+          <form className="newsletter-form"
+            /* čas načítania formulára — stanoví sa až v prehliadači, do statickej stránky sa nezapečie */
+            ref={el => { if (el && !el.dataset.t) el.dataset.t = String(Date.now()) }}
+            onSubmit={async e => {
             e.preventDefault()
-            const input = e.currentTarget.querySelector('input') as HTMLInputElement | null
+            const form = e.currentTarget
+            const input = form.querySelector('input.newsletter-input') as HTMLInputElement | null
+            const navnada = form.querySelector('input[name="website"]') as HTMLInputElement | null
             const email = input?.value
             if (!email) return
-            try { await fetch('/api/newsletter', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, source: 'homepage' }) }); if (input) input.value = ''; alert('Ďakujeme! Prihlásili sme vás.') } catch {}
+            try { await fetch('/api/newsletter', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, source: 'homepage', website: navnada?.value || '', ts: Number(form.dataset.t) || 0 }) }); if (input) input.value = ''; alert('Ďakujeme! Prihlásili sme vás.') } catch {}
           }}>
             <input className="newsletter-input" type="email" placeholder="váš@email.sk" required />
+            {/* návnada pre boty: človek toto pole nevidí, bot ho vyplní a tým sa prezradí */}
+            <input name="website" tabIndex={-1} autoComplete="off" aria-hidden="true"
+              style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, opacity: 0 }} />
             <button type="submit" className="newsletter-submit">Prihlásiť sa →</button>
           </form>
         </div>
