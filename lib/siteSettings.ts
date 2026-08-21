@@ -11,6 +11,9 @@ export interface SiteSettings {
   commentsModeration: boolean   // true = komentáre čakajú na schválenie
   recaptchaSiteKey: string
   recaptchaSecret: string
+  // Tajomstvo pre cron (autopilot). Držíme ho v DB, nie v premenných Vercelu,
+  // aby sa dalo meniť bez zásahu do hostingu. Env CRON_SECRET má prednosť.
+  cronSecret: string
   // API keys (spravované z adminu; fallback na Vercel env)
   openaiKey: string
   pexelsKey: string
@@ -31,6 +34,7 @@ const SITEBEHAVIOUR_DEFAULT = `<script type="text/javascript">
 export const DEFAULT_SITE: SiteSettings = {
   gaId: '', metaPixelId: '', gtmId: '', headHtml: SITEBEHAVIOUR_DEFAULT,
   commentsEnabled: true, commentsModeration: true, recaptchaSiteKey: '', recaptchaSecret: '',
+  cronSecret: '',
   openaiKey: '', pexelsKey: '', pixabayKey: '',
   webhookUrl: '', webhookSecret: '',
   notifyEmail: '', resendKey: '', resendFrom: 'Monetico <onboarding@resend.dev>',
