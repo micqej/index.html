@@ -161,7 +161,7 @@ export default function Home({ recentPosts, categories }: Props) {
           <h2 className="newsletter-title">Tipy pre rast<br />každý <span>týždeň.</span></h2>
         </div>
         <div>
-          <p style={{ color: 'var(--muted)', marginBottom: '22px', lineHeight: '1.7' }}>Žiadny spam. Len overené stratégie z praxe, ktoré fungujú pre slovenské firmy.</p>
+          <p style={{ color: 'var(--muted-on-y)', marginBottom: '22px', lineHeight: '1.7' }}>Žiadny spam. Len overené stratégie z praxe, ktoré fungujú pre slovenské firmy.</p>
           <form className="newsletter-form" onSubmit={async e => {
             e.preventDefault()
             const input = e.currentTarget.querySelector('input') as HTMLInputElement | null

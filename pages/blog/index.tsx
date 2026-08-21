@@ -119,7 +119,7 @@ export default function Blog({ posts, categories }: Props) {
           <h2 className="newsletter-title">Tipy priamo<br />do <span>inboxu.</span></h2>
         </div>
         <div>
-          <p style={{ color: 'var(--muted)', marginBottom: '22px', lineHeight: '1.7' }}>
+          <p style={{ color: 'var(--muted-on-y)', marginBottom: '22px', lineHeight: '1.7' }}>
             Každý týždeň jeden tip z praxe. Bez spamu, len obsah, ktorý používate hneď.
           </p>
           <form className="newsletter-form" onSubmit={async e => {

@@ -17,6 +17,7 @@
   --orange: #ea580c;
 
   --muted: #6b6b68;          /* secondary text on light */
+  --muted-on-y: #57574f;     /* secondary text na žltom páse — --muted tam má len 4,14:1 */
   --faint: #aaa9a3;
   --border: #e4e3de;
 
@@ -133,8 +134,8 @@ img { max-width: 100%; height: auto; }
 .scroll-hint { display: flex; align-items: center; gap: 10px; grid-column: 1 / -1; margin-top: 18px;
   font-family: var(--font-mono); font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: rgba(255,255,255,.55); }
 .scroll-line { width: 60px; height: 2px; background: rgba(255,255,255,.3); position: relative; overflow: hidden; }
-.scroll-line::after { content: ''; position: absolute; left: 0; top: 0; height: 100%; width: 20px; background: var(--y); animation: scrollDash 1.8s ease-in-out infinite; }
-@keyframes scrollDash { 0% { left: -20px; } 100% { left: 60px; } }
+.scroll-line::after { content: ''; position: absolute; left: 0; top: 0; height: 100%; width: 20px; background: var(--y); animation: scrollDash 1.8s ease-in-out infinite; will-change: transform; }
+@keyframes scrollDash { 0% { transform: translateX(-20px); } 100% { transform: translateX(60px); } }
 
 /* hero visual (rastová karta vpravo) */
 .hero-visual { position: absolute; top: 104px; right: 56px; width: 360px; z-index: 1; }

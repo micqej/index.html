@@ -13,7 +13,7 @@ export default function Footer() {
         </ul>
       </div>
       <div style={{ width: '100%', borderTop: '1px solid rgba(255,255,255,0.12)', marginTop: 28, paddingTop: 22, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)', letterSpacing: 1, textTransform: 'uppercase' }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.55)', letterSpacing: 1, textTransform: 'uppercase' }}>
           Brandrise s.r.o. · Sokolovská 178/10, 040 11 Košice · DIČ: 2121313865 · IČ DPH: SK2121313865 · Platca DPH
         </div>
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'rgba(255,255,255,0.55)', letterSpacing: '0.5px' }}>
