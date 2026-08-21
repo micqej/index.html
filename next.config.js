@@ -13,9 +13,12 @@ const securityHeaders = [
   { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=()' },
   { key: 'X-DNS-Prefetch-Control', value: 'on' },
   { key: 'Cross-Origin-Opener-Policy', value: 'same-origin-allow-popups' },
-  // Moderná náhrada X-Frame-Options + zákaz pluginov a prepis http odkazov na https.
+  // Moderná náhrada X-Frame-Options + zákaz pluginov a cudzích cieľov formulárov.
   // Skripty zámerne NEobmedzujeme — merací kód sa pridáva v admine (Integrácie)
   // a prísny script-src by ho ticho zablokoval.
+  // POZOR: sem NEDÁVAJ upgrade-insecure-requests — na localhoste prepne fetch
+  // /api/public/site na https a lokálny vývoj prestane fungovať (v produkcii
+  // aj tak všetko beží cez https + HSTS, takže by nič nepridalo).
   {
     key: 'Content-Security-Policy',
     value: [
@@ -23,7 +26,6 @@ const securityHeaders = [
       "base-uri 'self'",
       "form-action 'self'",
       "object-src 'none'",
-      'upgrade-insecure-requests',
     ].join('; '),
   },
 ]
