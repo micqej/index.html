@@ -7,14 +7,14 @@ type ImageR = { url: string; thumb: string; credit: string; source: string }
 
 const CATEGORIES = ['Marketing Tipy', 'Podnikanie', 'O eshopoch', 'Ako na to', 'Analýza', 'Email', 'SEO', 'WordPress', 'O weboch', 'Sociálne siete']
 const TABS: { id: string; icon: string }[] = [
-  { id: 'Prehľad', icon: 'overview' }, { id: 'Generovať', icon: 'generate' },
+  { id: 'Prehľad', icon: 'overview' }, { id: 'Štatistiky', icon: 'chart' }, { id: 'Generovať', icon: 'generate' },
   { id: 'Správy', icon: 'inbox' }, { id: 'Články', icon: 'articles' }, { id: 'Plán', icon: 'plan' },
   { id: 'Komentáre', icon: 'comment' }, { id: 'Newsletter', icon: 'mail' },
   { id: 'Nastavenia', icon: 'settings' }, { id: 'Integrácie', icon: 'plug' },
 ]
 // pekné ascii slugy do URL hashu (žiadne #Pl%C3%A1n)
 const TAB_SLUG: Record<string, string> = {
-  'Prehľad': 'prehlad', 'Generovať': 'generovat', 'Správy': 'spravy', 'Články': 'clanky', 'Plán': 'plan',
+  'Prehľad': 'prehlad', 'Štatistiky': 'statistiky', 'Generovať': 'generovat', 'Správy': 'spravy', 'Články': 'clanky', 'Plán': 'plan',
   'Komentáre': 'komentare', 'Newsletter': 'newsletter', 'Nastavenia': 'nastavenia', 'Integrácie': 'integracie',
 }
 
@@ -208,6 +208,7 @@ export default function Admin() {
           <main className="amain">
             <h2 className="ahd">{tab}</h2>
             {tab === 'Prehľad' && <Overview sess={sess} />}
+            {tab === 'Štatistiky' && <WebStats />}
             {tab === 'Správy' && <Messages onChange={loadPending} />}
             {tab === 'Generovať' && <Generate sess={sess} />}
             {tab === 'Články' && <Articles />}
@@ -218,6 +219,172 @@ export default function Admin() {
             {tab === 'Integrácie' && <Integrations />}
           </main>
         </div>
+      )}
+    </>
+  )
+}
+
+/* ── Štatistiky webu ──────────────────────────────────────────────────────
+   Vlastné meranie (lib/stats.ts) — bez cookies, neblokujú ho adblockery.
+   Kľúčové je poradie stĺpcov: stránky sú zoradené podľa DOPYTOV, nie návštev.
+   ──────────────────────────────────────────────────────────────────────── */
+
+function Funnel({ steps }: { steps: { step: string; sessions: number }[] }) {
+  const top = steps[0]?.sessions || 0
+  return (
+    <div className="funnel">
+      {steps.map((s, i) => {
+        const share = top ? (s.sessions / top) * 100 : 0
+        const prev = i > 0 ? steps[i - 1].sessions : 0
+        // strop na 100 %: pri návštevníkovi, ktorému prehliadač zablokoval meranie,
+        // môže dorátaný dopyt prekročiť predošlý stupeň a percento by vyzeralo nezmyselne
+        const keep = i > 0 && prev ? Math.min(100, Math.round((s.sessions / prev) * 100)) : null
+        const lost = i > 0 ? prev - s.sessions : 0
+        return (
+          <div className="fn-row" key={s.step}>
+            <div className="fn-head">
+              <b>{s.step}</b>
+              <span className="amut sm">
+                {s.sessions.toLocaleString('sk-SK')}
+                {top > 0 && <> · {Math.round(share)} % z návštev</>}
+              </span>
+            </div>
+            <div className="fn-bar"><span style={{ width: `${Math.min(100, Math.max(share, s.sessions > 0 ? 1.5 : 0))}%` }} /></div>
+            {keep !== null && (
+              <div className="fn-drop amut sm">
+                {keep} % pokračovalo ďalej{lost > 0 && <> · {lost.toLocaleString('sk-SK')} odišlo</>}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function TrendChart({ data }: { data: { day: string; visits: number; leads: number }[] }) {
+  if (!data.length) return <p className="amut sm">Zatiaľ žiadne dáta.</p>
+  const max = Math.max(1, ...data.map(d => d.visits))
+  return (
+    <div className="trend">
+      {data.map(d => (
+        <div className="trend-col" key={d.day} title={`${new Date(d.day).toLocaleDateString('sk-SK')} — ${d.visits} návštev, ${d.leads} dopytov`}>
+          <div className="trend-bars">
+            <span className="tb-visits" style={{ height: `${(d.visits / max) * 100}%` }} />
+            {d.leads > 0 && <span className="tb-leads" style={{ height: `${Math.max((d.leads / max) * 100, 6)}%` }} />}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function Bars({ rows }: { rows: { name: string; visits: number; leads: number }[] }) {
+  const max = Math.max(1, ...rows.map(r => r.visits))
+  if (!rows.length) return <p className="amut sm">Zatiaľ žiadne dáta.</p>
+  return (
+    <table className="atab2"><tbody>
+      {rows.map(r => (
+        <tr key={r.name}>
+          <td style={{ width: '38%' }}>{r.name}</td>
+          <td><div className="mini-bar"><span style={{ width: `${(r.visits / max) * 100}%` }} /></div></td>
+          <td className="ar amut sm" style={{ whiteSpace: 'nowrap' }}>
+            {r.visits}{r.leads > 0 && <> · <b style={{ color: 'var(--good)' }}>{r.leads} dopyt{r.leads > 1 ? 'y' : ''}</b></>}
+          </td>
+        </tr>
+      ))}
+    </tbody></table>
+  )
+}
+
+function WebStats() {
+  const [days, setDays] = useState(30)
+  const [d, setD] = useState<any>(null)
+  const [err, setErr] = useState('')
+  const [detail, setDetail] = useState<string | null>(null)
+  const [detailData, setDetailData] = useState<any>(null)
+
+  const load = useCallback(() => {
+    setErr('')
+    api(`/api/admin/web-stats?days=${days}`).then(setD).catch(e => setErr(e.message))
+  }, [days])
+  useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    if (!detail) { setDetailData(null); return }
+    api(`/api/admin/web-stats?days=${days}&path=${encodeURIComponent(detail)}`).then(setDetailData).catch(() => {})
+  }, [detail, days])
+
+  const o = d?.overview
+  const pct = (n: number, z: number) => (z ? Math.round((n / z) * 1000) / 10 : 0)
+
+  return (
+    <>
+      <div className="arow wrap" style={{ marginBottom: 14 }}>
+        {[[7, '7 dní'], [30, '30 dní'], [90, '90 dní'], [365, 'rok']].map(([v, l]) => (
+          <button key={String(v)} className={`aday${days === v ? ' on' : ''}`} onClick={() => setDays(v as number)}>{l}</button>
+        ))}
+        <button className="abtn ghost" onClick={load}>Obnoviť</button>
+      </div>
+
+      {err && <div className="awarn"><Ic n="warn" s={15} /> {err}</div>}
+      {!d && !err && <div className="acard">Načítavam…</div>}
+
+      {d && (
+        <>
+          <div className="stat-row" style={{ marginBottom: 16 }}>
+            <div className="stat-box2"><b>{o.visits.toLocaleString('sk-SK')}</b><span>návštev</span></div>
+            <div className="stat-box2"><b>{o.views.toLocaleString('sk-SK')}</b><span>zobrazení stránok</span></div>
+            <div className="stat-box2"><b>{o.leads}</b><span>dopytov z formulára</span></div>
+            <div className="stat-box2"><b>{o.conversion} %</b><span>konverzia návšteva → dopyt</span></div>
+            <div className="stat-box2"><b>{o.newsletters}</b><span>odberov newslettera</span></div>
+          </div>
+
+          <div className="acard">
+            <h3>Lievik — kadiaľ ľudia odchádzajú</h3>
+            <p className="amut sm">Každý stupeň je počet <b>návštev</b> (nie klikov), ktoré sa doň dostali. Najväčší prepad ukazuje, čo opraviť ako prvé.</p>
+            <Funnel steps={d.funnel} />
+          </div>
+
+          <div className="acard">
+            <h3>Priebeh — návštevy a dopyty</h3>
+            <p className="amut sm">Fialová = návštevy, zelená = dopyty.</p>
+            <TrendChart data={d.trend} />
+          </div>
+
+          <div className="acard">
+            <h3>Stránky a články ({d.pages.length})</h3>
+            <p className="amut sm">Zoradené podľa <b>počtu dopytov</b>, nie návštev — to je jediné číslo, ktoré platí faktúry. Klikni na riadok a uvidíš lievik tej stránky.</p>
+            <table className="atab2 plan-tab"><thead><tr>
+              <th>Stránka</th><th className="ar">Návštevy</th><th className="ar">Prečítali</th><th className="ar">Klik na službu</th><th className="ar">Dopyty</th><th className="ar">Konverzia</th>
+            </tr></thead><tbody>
+              {d.pages.map((p: any) => (
+                <tr key={p.path} className={detail === p.path ? 'pedit' : ''} style={{ cursor: 'pointer' }} onClick={() => setDetail(detail === p.path ? null : p.path)}>
+                  <td><b>{p.path}</b> <a href={p.path} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ color: 'var(--acc)' }}>otvoriť</a></td>
+                  <td className="ar">{p.visits}</td>
+                  <td className="ar amut">{p.reads}{p.visits > 0 && <span className="sm"> ({pct(p.reads, p.visits)} %)</span>}</td>
+                  <td className="ar amut">{p.ctas}</td>
+                  <td className="ar"><b style={{ color: p.leads > 0 ? 'var(--good)' : undefined }}>{p.leads}</b></td>
+                  <td className="ar amut sm">{pct(p.leads, p.visits)} %</td>
+                </tr>
+              ))}
+              {d.pages.length === 0 && <tr><td colSpan={6} className="amut sm">Zatiaľ žiadne dáta — meranie začne zbierať pri prvej návšteve po nasadení.</td></tr>}
+            </tbody></table>
+          </div>
+
+          {detail && (
+            <div className="acard">
+              <h3>Lievik stránky {detail}</h3>
+              {detailData ? <Funnel steps={detailData.funnel} /> : <p className="amut sm">Načítavam…</p>}
+            </div>
+          )}
+
+          <div className="agrid2">
+            <div className="acard"><h3>Odkiaľ ľudia prišli</h3><Bars rows={d.channels} /></div>
+            <div className="acard"><h3>Zariadenia</h3><Bars rows={d.devices} /></div>
+          </div>
+          <div className="acard"><h3>Konkrétne zdroje</h3><Bars rows={d.refs.filter((r: any) => r.name !== '—')} /></div>
+        </>
       )}
     </>
   )
@@ -696,8 +863,21 @@ function Messages({ onChange }: { onChange: () => void }) {
   const [pushMsg, setPushMsg] = useState('')
   const [pushOn, setPushOn] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [notify, setNotify] = useState<any>(null)
+  const [mailMsg, setMailMsg] = useState('')
+  const [mailBusy, setMailBusy] = useState(false)
   const load = useCallback(async () => setList((await api('/api/admin/messages')).messages || []), [])
   useEffect(() => { load() }, [load])
+  const loadNotify = useCallback(() => { api('/api/admin/notify-test').then(setNotify).catch(() => {}) }, [])
+  useEffect(() => { loadNotify() }, [loadNotify])
+  async function testMail() {
+    setMailBusy(true); setMailMsg('')
+    try {
+      const r = await api('/api/admin/notify-test', { method: 'POST', timeoutMs: 35000 })
+      setMailMsg(r.ok ? 'Odoslané — pozri si schránku (aj spam).' : r.reason)
+    } catch (e: any) { setMailMsg(e.message) }
+    setMailBusy(false); loadNotify()
+  }
   useEffect(() => {
     if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window) {
       navigator.serviceWorker.getRegistration().then(r => r?.pushManager.getSubscription().then(s => setPushOn(!!s))).catch(() => {})
@@ -721,10 +901,23 @@ function Messages({ onChange }: { onChange: () => void }) {
       await navigator.serviceWorker.ready
       const { publicKey } = await api('/api/admin/push')
       if (!publicKey) { setPushMsg('Chýba VAPID kľúč na serveri.'); setBusy(false); return }
+      // ⚠️ Prehliadač si pamätá starý odber aj po zmene VAPID kľúča na serveri.
+      // Ak sa kľúče nezhodujú, subscribe() spadne na „Registration failed —
+      // push service error“ a nie je z toho poznať prečo. Preto starý odber
+      // najprv zrušíme; keď žiadny nie je, nič sa nedeje.
+      const old = await reg.pushManager.getSubscription()
+      if (old) { try { await old.unsubscribe() } catch { /* aj tak skúsime nový */ } }
       const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(publicKey) })
       await api('/api/admin/push', { method: 'POST', body: JSON.stringify({ action: 'subscribe', subscription: sub.toJSON() }) })
       setPushOn(true); setPushMsg('Notifikácie zapnuté. Toto zariadenie dostane upozornenie pri novej správe.')
-    } catch (e: any) { setPushMsg('Nepodarilo sa zapnúť: ' + (e.message || e)) }
+    } catch (e: any) {
+      const raw = String(e?.message || e)
+      // Safari na Macu hlási len „push service error“ — bez rady sa s tým nedá nič robiť.
+      const rada = /push service error|AbortError/i.test(raw)
+        ? ' Tip: na počítači to najspoľahlivejšie funguje v Chrome. Na iPhone musíš appku najprv pridať na plochu a otvoriť ju odtiaľ — v obyčajnom Safari to iOS nedovolí.'
+        : ''
+      setPushMsg('Nepodarilo sa zapnúť: ' + raw + '.' + rada)
+    }
     setBusy(false)
   }
   async function testPush() {
@@ -736,7 +929,39 @@ function Messages({ onChange }: { onChange: () => void }) {
   return (
     <>
       <div className="acard">
-        <h3>Notifikácie na telefón</h3>
+        <h3>E-mailové upozornenia</h3>
+        {notify && (notify.missing.length > 0 ? (
+          <div className="notify-band bad">
+            <Ic n="warn" s={16} />
+            <div>
+              <b>Upozornenia nechodia — nie je nastavené: {notify.missing.join(' a ')}.</b><br />
+              Doplň v <b>Integrácie → E-mailové upozornenia</b>. Kľúč zdarma na resend.com (3 000 e-mailov mesačne).
+              Kým to nenastavíš, správy sa ukladajú sem, ale nikto sa o nich nedozvie.
+            </div>
+          </div>
+        ) : notify.last && !notify.last.ok ? (
+          <div className="notify-band bad">
+            <Ic n="warn" s={16} />
+            <div><b>Posledné upozornenie zlyhalo.</b><br />{notify.last.reason}</div>
+          </div>
+        ) : (
+          <div className="notify-band ok">
+            <Ic n="check" s={16} />
+            <div>
+              Upozornenia sú nastavené{notify.last?.to ? <> na <b>{notify.last.to}</b></> : null}.
+              {notify.last?.ok && notify.last?.at && <> Naposledy odoslané {new Date(notify.last.at).toLocaleString('sk-SK')}.</>}
+            </div>
+          </div>
+        ))}
+        <div className="arow wrap">
+          <button className="abtn ghost" onClick={testMail} disabled={mailBusy}>
+            <Ic n="mail" s={15} /> {mailBusy ? 'Posielam…' : 'Poslať skúšobný e-mail'}
+          </button>
+          {mailMsg && <span className="amut sm">{mailMsg}</span>}
+        </div>
+      </div>
+      <div className="acard">
+        <h3>Notifikácie na telefón{notify ? ` (${notify.pushDevices} zariadení)` : ''}</h3>
         <p className="amut sm">Zapni upozornenia a dostaneš push priamo na tento telefón pri každej novej správe — tak ako pri appke 365 citátov. <b>iPhone:</b> najprv otvor <code>monetico.sk/admin</code> v Safari → Zdieľať → <b>Pridať na plochu</b>, potom appku otvor z plochy a klikni sem.</p>
         <div className="arow wrap">
           <button className="abtn" onClick={enablePush} disabled={busy}><Ic n="bell" s={15} /> {pushOn ? 'Notifikácie sú zapnuté' : (busy ? 'Zapínam…' : 'Zapnúť notifikácie')}</button>
@@ -1058,4 +1283,20 @@ body{margin:0;background:var(--bg);font-family:'Inter',-apple-system,sans-serif;
 .jobbar{height:6px;border-radius:50px;background:var(--bd);overflow:hidden;margin-bottom:8px}
 .jobbar span{display:block;height:100%;background:var(--acc);border-radius:50px;transition:width .4s ease}
 .aerr.sm{font-size:12px}
+.funnel{display:flex;flex-direction:column;gap:2px}
+.fn-row{padding:10px 0}
+.fn-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:6px;font-size:14px}
+.fn-bar{height:26px;background:var(--bg);border:1px solid var(--bd);border-radius:7px;overflow:hidden}
+.fn-bar span{display:block;height:100%;background:linear-gradient(90deg,var(--acc),#7c6cf0);border-radius:6px;transition:width .5s ease}
+.fn-drop{margin-top:5px;padding-left:2px;border-left:2px solid var(--bd);margin-left:4px;padding-bottom:2px}
+.trend{display:flex;align-items:flex-end;gap:2px;height:130px;padding-top:8px}
+.trend-col{flex:1;height:100%;display:flex;align-items:flex-end;min-width:2px}
+.trend-bars{position:relative;width:100%;height:100%;display:flex;align-items:flex-end;justify-content:center}
+.tb-visits{width:100%;background:var(--acc-sft);border-top:2px solid var(--acc);border-radius:3px 3px 0 0;min-height:2px}
+.tb-leads{position:absolute;bottom:0;width:100%;background:var(--good);border-radius:3px 3px 0 0;opacity:.85}
+.mini-bar{height:9px;background:var(--bg);border-radius:50px;overflow:hidden;border:1px solid var(--bd)}
+.mini-bar span{display:block;height:100%;background:var(--acc);border-radius:50px}
+.notify-band{display:flex;align-items:flex-start;gap:10px;border-radius:9px;padding:11px 13px;font-size:13px;margin-bottom:13px;border:1px solid}
+.notify-band.ok{background:var(--good-sft);border-color:#a7f3d0;color:#065f46}
+.notify-band.bad{background:#fffbeb;border-color:#fde68a;color:#92400e}
 `

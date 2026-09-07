@@ -3,6 +3,7 @@ import { runAutopilotBatch } from '../../../lib/autopilot'
 import { publishDue } from '../../../lib/articles'
 import { dbSafe } from '../../../lib/db'
 import { getSiteSettings } from '../../../lib/siteSettings'
+import { pruneEvents } from '../../../lib/stats'
 
 // Vercel dnes dovolí funkcii bežať 300 s. Písanie článku po krokoch sa doň
 // pohodlne zmestí; rozpočet 240 s necháva rezervu na dopísanie a uloženie.
@@ -49,6 +50,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Zverejňovanie beží VŽDY, aj keď sa dnes nič nepíše — inak by naplánované
     // články ostali visieť, lebo poistky nižšie beh predčasne ukončia.
     const published = await publishDue()
+
+    // Údržba merania — surové udalosti staršie než rok sa zmažú, aby tabuľka
+    // nerástla donekonečna. Beží pri každom cykle, je to jeden lacný DELETE.
+    await pruneEvents(400).catch(() => 0)
 
     // Poistka 1: kým je vo fronte hotový článok s budúcim dátumom, nové sa
     // nepíšu. Obsah už je pripravený, netreba ho vyrábať dopredu.

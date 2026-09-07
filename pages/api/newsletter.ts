@@ -3,6 +3,7 @@ import { addSubscriber, looksLikeBot, signupsFromIp } from '../../lib/subscriber
 import { dbReady } from '../../lib/db'
 import { fireSubscriberWebhook, buildSubscriberPayload } from '../../lib/webhook'
 import { SITE_URL } from '../../lib/site'
+import { recordServerEvent } from '../../lib/stats'
 
 // Strop na funkciu — bez neho ju platforma nechá visieť 300 s (=zamrznutý admin).
 export const config = { maxDuration: 15 }
@@ -49,6 +50,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       status: podozrive ? 'spam' : 'ok',
       ip,
     })
+
+    // Do merania len skutočné prihlásenia (nie spam), aby lievik neklamal.
+    if (created && !podozrive) {
+      await recordServerEvent('newsletter', String(req.body?.path || '/'), { sid: String(req.body?.sid || '') }, { source: src })
+        .catch(() => {})
+    }
 
     // CRM webhook — len pri NOVOM a dôveryhodnom odberateľovi, fire-safe.
     if (created && !podozrive) {

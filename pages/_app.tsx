@@ -3,6 +3,7 @@ import { Inter, Space_Mono } from 'next/font/google';
 import '../styles/globals.css';
 import Effects from '../components/Effects';
 import TrackingScripts from '../components/TrackingScripts';
+import Analytics from '../components/Analytics';
 
 // Fonty sa sťahujú pri builde a servírujú z vlastnej domény.
 // Predtým boli v globals.css cez @import na fonts.googleapis.com — prehliadač
@@ -24,6 +25,7 @@ export default function App({ Component, pageProps }: AppProps) {
       `}</style>
       <Effects />
       <TrackingScripts />
+      <Analytics />
       <Component {...pageProps} />
     </>
   );

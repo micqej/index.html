@@ -3,13 +3,14 @@ import { addMessage } from '../../lib/messages'
 import { sendPush } from '../../lib/push'
 import { sendNotifyEmail } from '../../lib/email'
 import { dbReady } from '../../lib/db'
+import { recordServerEvent } from '../../lib/stats'
 
 // Strop na funkciu — bez neho ju platforma nechá visieť 300 s (=zamrznutý admin).
 export const config = { maxDuration: 20 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
-  const { name, email, phone, services, message, website } = req.body || {}
+  const { name, email, phone, services, message, website, sid, entry, prev } = req.body || {}
   if (website) return res.status(200).json({ ok: true }) // honeypot — bot
   if (!name && !email && !message) return res.status(400).json({ error: 'Vyplň aspoň meno alebo e-mail a správu.' })
   if (!dbReady()) return res.status(200).json({ ok: true, stored: false })
@@ -26,6 +27,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ip,
     })
 
+    // Dopyt do merania — zapisuje SERVER, nie prehliadač: klient by ho pri
+    // presmerovaní po odoslaní často nestihol odoslať a čísla by boli nižšie.
+    // `prev`/`entry` hovoria, z ktorého článku človek prišiel → odtiaľ vieme,
+    // ktorý obsah reálne prináša dopyty.
+    await recordServerEvent('lead', '/kontakt/', { sid: String(sid || '') }, {
+      entry: String(entry || '').slice(0, 300),
+      prev: String(prev || '').slice(0, 300),
+      services: svc.slice(0, 5),
+    }).catch(() => {})
+
     // Upozornenia — fire-safe, nezhodia odoslanie
     const label = m.name || m.email || 'Neznámy'
     await sendPush({
@@ -41,7 +52,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
        <b>Telefón:</b> ${esc(m.phone)}<br>
        <b>Záujem:</b> ${esc(svc.join(', '))}</p>
        <p><b>Správa:</b><br>${esc(m.message).replace(/\n/g, '<br>')}</p>`
-    ).catch(() => {})
+    ).catch(() => ({ ok: false, reason: 'neznáma chyba' }))
 
     return res.status(200).json({ ok: true, stored: true })
   } catch (e: any) {

@@ -277,6 +277,23 @@ export async function migrate(): Promise<string[]> {
       updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
     )`; done.push('gen_jobs')
     await sql`CREATE INDEX IF NOT EXISTS gen_jobs_status_idx ON gen_jobs (status, updated_at)`
+
+    // Vlastné meranie návštevnosti (bez cookies) — pozri lib/stats.ts
+    await sql`CREATE TABLE IF NOT EXISTS stat_events (
+      id      BIGSERIAL PRIMARY KEY,
+      ts      TIMESTAMPTZ NOT NULL DEFAULT now(),
+      sid     TEXT NOT NULL,
+      path    TEXT NOT NULL,
+      kind    TEXT NOT NULL,
+      ref     TEXT NOT NULL DEFAULT '',
+      channel TEXT NOT NULL DEFAULT 'priamo',
+      device  TEXT NOT NULL DEFAULT '',
+      meta    JSONB NOT NULL DEFAULT '{}'
+    )`; done.push('stat_events')
+    await sql`CREATE INDEX IF NOT EXISTS stat_events_ts_idx ON stat_events (ts DESC)`
+    await sql`CREATE INDEX IF NOT EXISTS stat_events_path_idx ON stat_events (path, ts DESC)`
+    await sql`CREATE INDEX IF NOT EXISTS stat_events_sid_idx ON stat_events (sid)`
+    await sql`CREATE INDEX IF NOT EXISTS stat_events_kind_idx ON stat_events (kind, ts DESC)`
   }, 30000)
   return done
 }

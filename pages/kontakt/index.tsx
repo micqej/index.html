@@ -4,6 +4,7 @@ import Footer from '../../components/Footer'
 import SEO from '../../components/SEO'
 import { SparkIcon } from '../../components/Icons'
 import { SITE_URL } from '../../lib/site'
+import { attribution } from '../../components/Analytics'
 
 const SERVICES = [
   'Cold Email Kampane',
@@ -35,7 +36,8 @@ export default function Kontakt() {
     try {
       const r = await fetch('/api/contact', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...f, services: selected }),
+        // priradenie dopytu k obsahu: z ktorej stránky človek prišiel na formulár
+        body: JSON.stringify({ ...f, services: selected, ...attribution() }),
       })
       const d = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(d.error || 'Nepodarilo sa odoslať. Skúste to znova.')
