@@ -21,10 +21,13 @@ export interface SiteSettings {
   // Webhook na napojenie newslettera na CRM
   webhookUrl: string
   webhookSecret: string
-  // E-mailové upozornenia (nové správy z kontaktu) cez Resend
+  // E-mailové upozornenia (nové správy z kontaktu) cez vlastné SMTP
   notifyEmail: string       // kam poslať upozornenie
-  resendKey: string         // Resend API kľúč (re_…)
-  resendFrom: string        // odosielateľ (napr. "Monetico <web@monetico.sk>")
+  notifyFrom: string        // odosielateľ (napr. "Monetico web <web@monetico.sk>")
+  smtpHost: string          // napr. smtp.hostcreators.sk
+  smtpPort: number          // 465 (SSL) alebo 587 (STARTTLS)
+  smtpUser: string          // celá adresa schránky
+  smtpPass: string          // heslo k schránke
 }
 
 const SITEBEHAVIOUR_DEFAULT = `<script type="text/javascript">
@@ -37,7 +40,8 @@ export const DEFAULT_SITE: SiteSettings = {
   cronSecret: '',
   openaiKey: '', pexelsKey: '', pixabayKey: '',
   webhookUrl: '', webhookSecret: '',
-  notifyEmail: '', resendKey: '', resendFrom: 'Monetico <onboarding@resend.dev>',
+  notifyEmail: '', notifyFrom: '',
+  smtpHost: 'smtp.hostcreators.sk', smtpPort: 465, smtpUser: '', smtpPass: '',
 }
 
 const KEY = 'site'

@@ -1,15 +1,18 @@
-import { Resend } from 'resend'
+import nodemailer from 'nodemailer'
 import { getSiteSettings } from './siteSettings'
-import { db, dbSafe } from './db'
+import { dbSafe } from './db'
 
 /**
- * E-mailové upozornenia cez Resend.
+ * E-mailové upozornenia cez vlastnú SMTP schránku (hostcreators).
  *
- * ⚠️ Predtým táto funkcia pri chýbajúcom kľúči len ticho vrátila `false` a volajúci
- * to ešte zabalil do `.catch(() => {})`. Výsledok: formulár fungoval, správa sa
- * uložila, e-mail nikdy neprišiel — a NIKDE sa nedalo zistiť prečo.
- * Teraz vraciame konkrétny dôvod a posledný výsledok ukladáme do nastavení,
- * takže admin vie povedať „posledné upozornenie zlyhalo, lebo …“.
+ * Prečo SMTP a nie externá služba: schránku na monetico.sk už máme, doména má
+ * platné SPF/DKIM, nič sa neplatí navyše a nikam sa neposielajú dáta.
+ *
+ * ⚠️ Predtým táto funkcia pri chýbajúcom nastavení len ticho vrátila `false`
+ * a volajúci to ešte zabalil do `.catch(() => {})`. Formulár teda fungoval,
+ * správa sa uložila, e-mail nikdy neprišiel — a NIKDE sa nedalo zistiť prečo.
+ * Preto teraz vraciame konkrétny dôvod a posledný výsledok ukladáme do
+ * nastavení, aby admin vedel povedať „posledné upozornenie zlyhalo, lebo …“.
  */
 
 export interface NotifyResult { ok: boolean; reason: string; skipped?: boolean }
@@ -35,65 +38,83 @@ async function saveState(state: NotifyState): Promise<void> {
     ON CONFLICT (key) DO UPDATE SET value = ${sql.json(state as any)}`, null as any)
 }
 
+interface SmtpConfig { host: string; port: number; user: string; pass: string; from: string; to: string }
+
+/** Poskladá nastavenie z admina, s fallbackom na Vercel premenné. */
+async function smtpConfig(): Promise<SmtpConfig> {
+  const s = await getSiteSettings()
+  const host = (s.smtpHost || process.env.SMTP_HOST || '').trim()
+  const port = Number(s.smtpPort || process.env.SMTP_PORT || 465)
+  const user = (s.smtpUser || process.env.SMTP_USER || '').trim()
+  const pass = (s.smtpPass || process.env.SMTP_PASS || '').trim()
+  const to = (s.notifyEmail || '').trim()
+  // Odosielateľ MUSÍ byť na doméne, ktorú schránka smie posielať, inak to SPF
+  // vyhodnotí ako podvrh a e-mail skončí v spame (alebo ho server odmietne).
+  const from = (s.notifyFrom || '').trim() || user
+  return { host, port, user, pass, from, to }
+}
+
 /** Čo chýba, aby upozornenia mohli fungovať. Prázdne pole = všetko je nastavené. */
 export async function notifyMissing(): Promise<string[]> {
-  const s = await getSiteSettings()
-  const key = (s.resendKey && s.resendKey.trim()) || process.env.RESEND_API_KEY || ''
-  const to = (s.notifyEmail && s.notifyEmail.trim()) || ''
+  const c = await smtpConfig()
   const missing: string[] = []
-  if (!key) missing.push('Resend API kľúč')
-  if (!to) missing.push('adresa, kam upozornenia posielať')
+  if (!c.host) missing.push('SMTP server')
+  if (!c.user) missing.push('e-mailová schránka (používateľ)')
+  if (!c.pass) missing.push('heslo k schránke')
+  if (!c.to) missing.push('adresa, kam upozornenia posielať')
   return missing
 }
 
 /**
- * Pošle upozorňovací e-mail. Vracia konkrétny dôvod neúspechu — volajúci ho môže
- * zalogovať alebo zobraziť. Výsledok sa vždy uloží, nech je v admine vidieť stav.
+ * Pošle upozorňovací e-mail. Vracia konkrétny dôvod neúspechu — volajúci ho
+ * môže zobraziť. Výsledok sa vždy uloží, nech je v admine vidieť stav.
  */
 export async function sendNotifyEmail(subject: string, html: string): Promise<NotifyResult> {
-  const s = await getSiteSettings()
-  const key = (s.resendKey && s.resendKey.trim()) || process.env.RESEND_API_KEY || ''
-  const to = (s.notifyEmail && s.notifyEmail.trim()) || ''
-  const from = (s.resendFrom && s.resendFrom.trim()) || 'Monetico <onboarding@resend.dev>'
-
+  const c = await smtpConfig()
   const missing = await notifyMissing()
   if (missing.length) {
-    const reason = 'Nie je nastavené: ' + missing.join(' a ') + ' (Integrácie → E-mailové upozornenia).'
-    await saveState({ at: new Date().toISOString(), ok: false, reason, to })
+    const reason = 'Nie je nastavené: ' + missing.join(', ') + ' (Integrácie → E-mailové upozornenia).'
+    await saveState({ at: new Date().toISOString(), ok: false, reason, to: c.to })
     return { ok: false, reason, skipped: true }
   }
 
   try {
-    const resend = new Resend(key)
-    const r: any = await resend.emails.send({ from, to, subject, html })
-    // Resend nehádže výnimku pri odmietnutí — chybu vracia v tele odpovede.
-    if (r?.error) {
-      const reason = translate(String(r.error?.message || r.error))
-      await saveState({ at: new Date().toISOString(), ok: false, reason, to })
-      return { ok: false, reason }
-    }
-    await saveState({ at: new Date().toISOString(), ok: true, reason: '', to })
+    const transporter = nodemailer.createTransport({
+      host: c.host,
+      port: c.port,
+      secure: c.port === 465,        // 465 = SSL, 587 = STARTTLS
+      requireTLS: c.port !== 465,
+      auth: { user: c.user, pass: c.pass },
+      connectionTimeout: 12_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 20_000,
+    })
+    await transporter.sendMail({ from: c.from, to: c.to, subject, html })
+    transporter.close()
+    await saveState({ at: new Date().toISOString(), ok: true, reason: '', to: c.to })
     return { ok: true, reason: '' }
   } catch (e: any) {
-    const reason = translate(String(e?.message || e))
-    await saveState({ at: new Date().toISOString(), ok: false, reason, to })
+    const reason = translate(String(e?.message || e), e?.code)
+    await saveState({ at: new Date().toISOString(), ok: false, reason, to: c.to })
     return { ok: false, reason }
   }
 }
 
-/** Najčastejšie chyby Resendu po slovensky, aby sa nemuseli googliť. */
-function translate(msg: string): string {
+/** Najčastejšie chyby SMTP po slovensky, aby sa nemuseli googliť. */
+function translate(msg: string, code?: string): string {
   const m = msg.toLowerCase()
-  if (m.includes('testing emails to your own')) {
-    return 'Resend v skúšobnom režime pošle e-mail LEN na adresu, ktorou si sa registroval. ' +
-      'Buď nastav rovnakú adresu, alebo si v Resende over vlastnú doménu a zmeň odosielateľa.'
+  if (code === 'EAUTH' || m.includes('authentication failed') || m.includes('invalid login') || m.includes('535')) {
+    return 'Server odmietol prihlásenie — skontroluj schránku a heslo. Používateľ je celá adresa (napr. web@monetico.sk), nie len meno.'
   }
-  if (m.includes('api key is invalid') || m.includes('unauthorized') || m.includes('401')) {
-    return 'Resend API kľúč je neplatný — skontroluj ho v Integráciách (má tvar re_…).'
+  if (code === 'ETIMEDOUT' || code === 'ESOCKET' || m.includes('timeout') || m.includes('econnrefused')) {
+    return 'Nepodarilo sa spojiť so serverom. Over adresu servera a port — hostcreators používa smtp.hostcreators.sk, port 465 (SSL) alebo 587.'
   }
-  if (m.includes('domain is not verified') || m.includes('not verified')) {
-    return 'Doména odosielateľa nie je v Resende overená. Nechaj odosielateľa „Monetico <onboarding@resend.dev>“, kým doménu neoveríš.'
+  if (m.includes('self signed') || m.includes('certificate')) {
+    return 'Problém s certifikátom servera. Skús port 465 namiesto 587 (alebo naopak).'
   }
-  if (m.includes('rate') && m.includes('limit')) return 'Resend dočasne obmedzil počet odoslaných e-mailov. Skús o chvíľu.'
+  if (m.includes('sender') || m.includes('from') || m.includes('550') || m.includes('553')) {
+    return 'Server odmietol odosielateľa. Adresa v poli „Odosielateľ" musí patriť tej istej schránke, cez ktorú sa prihlasuješ.'
+  }
+  if (m.includes('recipient') || m.includes('554')) return 'Server odmietol príjemcu — skontroluj adresu, kam sa má upozornenie posielať.'
   return msg.slice(0, 300)
 }

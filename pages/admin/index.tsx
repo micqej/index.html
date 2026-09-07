@@ -935,7 +935,7 @@ function Messages({ onChange }: { onChange: () => void }) {
             <Ic n="warn" s={16} />
             <div>
               <b>Upozornenia nechodia — nie je nastavené: {notify.missing.join(' a ')}.</b><br />
-              Doplň v <b>Integrácie → E-mailové upozornenia</b>. Kľúč zdarma na resend.com (3 000 e-mailov mesačne).
+              Doplň v <b>Integrácie → E-mailové upozornenia</b> údaje k schránke na hostcreators (server, adresa, heslo).
               Kým to nenastavíš, správy sa ukladajú sem, ale nikto sa o nich nedozvie.
             </div>
           </div>
@@ -1178,13 +1178,20 @@ function Integrations() {
       </div>
       <div className="acard">
         <h3>E-mailové upozornenia (nové správy z kontaktu)</h3>
-        <p className="amut sm">Keď niekto vyplní kontaktný formulár, pošleme ti e-mail. Cez <b>Resend</b> (resend.com — free 3000 e-mailov/mes.). Vlož API kľúč a adresu, kam to má chodiť. Pre vlastnú doménu odosielateľa treba doménu v Resende overiť; inak nechaj predvolené.</p>
+        <p className="amut sm">Keď niekto vyplní kontaktný formulár, pošleme ti e-mail cez <b>vlastnú schránku</b> na hostcreators. Žiadna externá služba, nič navyše sa neplatí. Použi schránku na doméne monetico.sk — má platné SPF, takže upozornenie nespadne do spamu.</p>
         <div className="agrid2">
           <div><label className="alab">Kam posielať (tvoj e-mail)</label><input className="ain" value={s.notifyEmail || ''} onChange={e => set('notifyEmail', e.target.value)} placeholder="michal@monetico.sk" /></div>
-          <div><label className="alab">Resend API kľúč</label><input className="ain" type="password" value={s.resendKey || ''} onChange={e => set('resendKey', e.target.value)} placeholder="re_…" /></div>
+          <div><label className="alab">Odosielateľ (nepovinné)</label><input className="ain" value={s.notifyFrom || ''} onChange={e => set('notifyFrom', e.target.value)} placeholder="Monetico web &lt;web@monetico.sk&gt;" /></div>
         </div>
-        <label className="alab">Odosielateľ (From)</label>
-        <input className="ain" value={s.resendFrom || ''} onChange={e => set('resendFrom', e.target.value)} placeholder="Monetico <onboarding@resend.dev>" />
+        <div className="agrid2">
+          <div><label className="alab">SMTP server</label><input className="ain" value={s.smtpHost || ''} onChange={e => set('smtpHost', e.target.value)} placeholder="smtp.hostcreators.sk" /></div>
+          <div><label className="alab">Port</label><select className="ain" value={s.smtpPort || 465} onChange={e => set('smtpPort', +e.target.value)}><option value={465}>465 — SSL (odporúčané)</option><option value={587}>587 — STARTTLS</option></select></div>
+        </div>
+        <div className="agrid2">
+          <div><label className="alab">Schránka (celá adresa)</label><input className="ain" value={s.smtpUser || ''} onChange={e => set('smtpUser', e.target.value)} placeholder="web@monetico.sk" autoComplete="off" /></div>
+          <div><label className="alab">Heslo k schránke</label><input className="ain" type="password" value={s.smtpPass || ''} onChange={e => set('smtpPass', e.target.value)} autoComplete="new-password" /></div>
+        </div>
+        <p className="amut sm">Po uložení choď do <b>Správy</b> a klikni na <b>Poslať skúšobný e-mail</b> — ak niečo nesedí, vypíše to konkrétny dôvod.</p>
       </div>
       <div className="arow"><button className="abtn" onClick={save}>Uložiť všetko</button>{msg && <span className="amut sm">{msg}</span>}</div>
     </>
